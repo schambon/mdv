@@ -27,17 +27,19 @@ Implemented options:
 
 Width must be non-negative. A positive width caps rendering only when it is narrower than the terminal. Invalid arguments return exit status 2; startup or runtime errors return 1; normal completion returns 0.
 
-Both stdin and stdout must be interactive character devices. On platforms other than macOS, startup fails with an unsupported-platform error.
+Both stdin and stdout must be interactive character devices. The path is validated before a terminal is required, so a bad filename reports the file problem rather than a terminal problem. On platforms other than macOS, startup fails with an unsupported-platform error.
 
 ## 3. Viewer
 
-The viewer enters raw mode, switches to the alternate screen, hides the cursor, reserves the last terminal row for status, and redraws the complete frame after each event. Terminal resize events update the viewport dimensions and redraw the frame, but do not recompute Markdown wrapping until the next reload. Terminal widths below 10 or failed size reads fall back to 80 columns; heights below 2 fall back to 24 rows.
+The viewer enters raw mode, switches to the alternate screen, hides the cursor, reserves the last terminal row for status, and redraws the complete frame after each event. Terminal resize events update the viewport dimensions, reflow the document at the new width, and restore the viewport to the rendered row nearest the source line that was showing. Terminal widths below 10 or failed size reads fall back to 80 columns; heights below 2 fall back to 24 rows.
 
 The normal status text is:
 
 ```text
 FILENAME  PERCENT%  source line CURRENT/TOTAL
 ```
+
+`CURRENT` is the source line of the first mapped rendered row at or below the top of the viewport, and `TOTAL` is the number of lines in the file.
 
 Messages and the search prompt temporarily replace it. Messages are displayed for one frame.
 
@@ -76,7 +78,7 @@ The block parser implements:
 
 Nested block structure is not modeled. Fence language labels are ignored. Table alignment colons do not affect alignment. Escaped pipes and other complex table syntax are not supported.
 
-The inline parser implements paired `**` and `__` strong emphasis, paired `*` and `_` emphasis, paired `~~` strikethrough, single-backtick code spans, `[label](target)` links, and bare lowercase `http://` or `https://` URLs. Delimiters are matched by the next closing delimiter; nesting, escaping, reference links, autolinks, images, and pathological delimiter rules are not supported.
+The inline parser implements paired `**` and `__` strong emphasis, paired `*` and `_` emphasis, paired `~~` strikethrough, single-backtick code spans, `[label](target)` links, and bare lowercase `http://` or `https://` URLs. Delimiters are matched by the next closing delimiter; nesting, escaping, reference links, autolinks, images, and pathological delimiter rules are not supported. A pair enclosing nothing, as in `a ** b`, is treated as unmatched so the delimiters stay visible rather than rendering as an empty span.
 
 Inline markup is parsed in paragraphs, headings, quotes, list bodies, and table cells. Unsupported or unmatched syntax remains visible text.
 
@@ -84,11 +86,13 @@ Inline markup is parsed in paragraphs, headings, quotes, list bodies, and table 
 
 Content has two columns of left and right horizontal allowance. Text wraps at transitions between whitespace and non-whitespace runs. Continuation rows repeat the block prefix width as spaces. Code rows use four leading spaces; quote rows use `│ `; headings retain their `#` prefix; list markers are preserved.
 
-Tables share column widths across adjacent table rows. Width is measured from visible inline text, excluding supported Markdown delimiters and link targets. If a table is too wide, its widest columns are reduced one cell at a time, but not below three cells; cell contents are then clipped and padded. Columns are separated with ` │ ` and the header is followed by a rule using `─` and `┼`. Table headers are bold, and inline styles also apply inside cells.
+No rendered row ever exceeds the requested width. A run with no wrapping opportunity, such as a long URL or code line, is split across rows rather than allowed to overflow, and trailing whitespace is trimmed from a row broken after a space. An overflowing row would be wrapped by the terminal itself, displacing every row below it and corrupting the frame.
+
+Tables share column widths across adjacent table rows. Width is measured from visible inline text, excluding supported Markdown delimiters and link targets. If a table is too wide, its widest columns are reduced one cell at a time, but not below three cells; cell contents are then clipped and padded. A table with more columns than the row can hold even at that minimum is clipped at the row edge. Columns are separated with ` │ ` and the header is followed by a rule using `─` and `┼`. Table headers are bold, and inline styles also apply inside cells.
 
 Cell width treats combining marks, enclosing marks, variation selectors, and zero-width joiners as zero-width. A fixed set of East Asian and emoji ranges is treated as double-width; other runes are single-width. This is rune-based, not full grapheme-cluster layout.
 
-`dark` and `light` currently use the same fixed ANSI style mapping. `auto` resolves to `dark`; `COLORFGBG` values ending in `;0` or `;1` also resolve to `dark`. Styling uses 256-colour sequences for code and inline code, plus standard bold, italic, strike, underline, and reverse-video sequences. `--no-color` disables these SGR sequences but does not disable OSC 8 hyperlinks.
+`dark` and `light` are distinct palettes: the light theme substitutes darker foregrounds so text stays legible against a light background. `auto` reads `COLORFGBG`, whose last field is the background colour index: 0-6 and 8 select `dark`, other values select `light`, and an absent or unparseable variable defaults to `dark`. Styling uses 256-colour sequences for code and inline code, plus standard bold, italic, strike, underline, and reverse-video sequences. `--no-color` disables these SGR sequences but deliberately does not disable OSC 8 hyperlinks, which remain useful on a monochrome terminal.
 
 ## 6. Links
 
@@ -128,4 +132,4 @@ The viewer restores the terminal, runs the editor synchronously with the control
 
 The Darwin backend saves and restores termios, disables echo, canonical mode, signals, extended processing, CR translation, software flow control, and output post-processing, and makes enter/leave idempotent. Escape-sequence decoding supports arrows, Page Up/Down, Home, and End. A 35 ms readiness check distinguishes a bare Escape key.
 
-`SIGWINCH` updates the stored size and redraws without reflowing the document. `SIGINT`, `SIGTERM`, and `SIGHUP` exit cleanly through deferred terminal restoration. A recovered application panic restores the terminal and is rethrown as `mdv: internal panic`.
+`SIGWINCH` updates the stored size, reflows the document, and redraws. `SIGINT`, `SIGTERM`, and `SIGHUP` exit cleanly through deferred terminal restoration. A recovered application panic restores the terminal and is rethrown as `mdv: internal panic`.

@@ -46,9 +46,10 @@ type App struct {
 	env     func(string) string
 	runEdit func(argv []string) error
 
-	src      source.Source
-	rendered layout.Document
-	size     terminal.Size
+	src         source.Source
+	rendered    layout.Document
+	sourceLines int // lines in the file, for the status line
+	size        terminal.Size
 
 	top     int
 	mode    mode
@@ -185,7 +186,9 @@ func (a *App) renderWidth() int {
 
 // render lays the document out at the current width.
 func (a *App) render() {
-	a.rendered = layout.Render(md.Parse(a.src.Bytes), layout.Options{
+	parsed := md.Parse(a.src.Bytes)
+	a.sourceLines = len(parsed.Lines)
+	a.rendered = layout.Render(parsed, layout.Options{
 		Width:       a.renderWidth(),
 		LineNumbers: a.cfg.LineNumbers,
 	})
@@ -290,17 +293,16 @@ func (a *App) execEditor(argv []string) error {
 
 // statusText is the normal status line.
 func (a *App) statusText() string {
-	total := len(a.rendered.Lines)
 	percent := 100
 	if a.maxTop() > 0 {
 		percent = a.top * 100 / a.maxTop()
 	}
-	sourceTotal := 1
-	if total > 0 {
-		sourceTotal = a.rendered.Lines[total-1].Source.Start.Line
+	total := a.sourceLines
+	if total < 1 {
+		total = 1
 	}
 	return fmt.Sprintf("%s  %d%%  source line %d/%d",
-		a.src.Name, percent, a.sourceLine(), sourceTotal)
+		a.src.Name, percent, a.sourceLine(), total)
 }
 
 // status is what the last row shows: a message, the search prompt, or the

@@ -43,16 +43,17 @@ path -> source.Load -> md.Parse -> doc.Document
 
 `cmd/mdv` uses `flag.FlagSet` with `ContinueOnError`. It accepts exactly one positional path and the flags documented in `REQUIREMENTS.md`. Style validation is limited to `auto`, `dark`, and `light`; width must be non-negative.
 
-`source.Load`:
+`source.Validate`:
 
 1. converts the path with `filepath.Abs`;
 2. accepts only case-insensitive `.md` and `.markdown` extensions;
 3. checks `os.Stat` and requires a regular file;
-4. rejects sizes above `32 << 20` bytes;
-5. reads the complete file with `os.ReadFile`; and
-6. returns the absolute path, basename, directory, and bytes.
+4. rejects sizes above `32 << 20` bytes; and
+5. returns the absolute path.
 
-There is no source abstraction for stdin or multiple files. `BaseDir` is retained in `source.Source` but is not consumed by link handling.
+`source.Load` validates, reads the complete file with `os.ReadFile`, and returns the absolute path, basename, and bytes. Splitting the two lets `app.Run` reject a bad path before it demands a terminal.
+
+There is no source abstraction for stdin or multiple files, and no `BaseDir`: nothing resolves local links, so storing the source directory would only invite the assumption that something does.
 
 ## 4. Semantic model
 
@@ -92,7 +93,7 @@ type Document struct {
 
 Block kinds are blank, paragraph, heading, rule, code, quote, list item, and table row. Inline kinds are text, emphasis, strong, strike, inline code, link, and the synthetic table separator.
 
-The parser records byte offsets and one-based source lines. Columns are currently set to 1 by parsed ranges. `Document.Position` can derive a one-based line and byte-based column from a byte offset, but current application paths do not call it.
+`Document.Position` binary-searches `Lines` to derive a one-based line and byte-based column from a byte offset, and the parser calls it for every range it records, so columns are real rather than placeholders. Offsets outside the document clamp to its first or last line.
 
 ## 5. Parser
 
@@ -122,7 +123,7 @@ The inline scanner operates left to right. At the current position it checks:
 3. a bare URL matching `https?://[^\s<>]+[^\s<>.,;:!?)]`; then
 4. literal text up to a byte that may start another construct.
 
-Paired-marker contents are stored as a single inline and are not recursively parsed. There is no delimiter stack or escape processing. Bare URL detection is lowercase and requires at least two characters after the scheme because of the regular expression shape.
+Paired-marker contents are stored as a single inline and are not recursively parsed. There is no delimiter stack or escape processing. A pair with an empty body is rejected as unmatched, so `**` alone stays visible instead of collapsing to nothing. Bare URL detection is lowercase and requires at least two characters after the scheme because of the regular expression shape. Adjacent literal runs, which the scanner emits whenever it retries at a construct byte, are merged before the inlines are returned.
 
 `ParseInline` exposes the same scanner to table layout so table cells receive identical supported inline styling.
 
@@ -154,13 +155,13 @@ type Document struct {
 
 Multi-line code blocks are expanded into one block per physical code row before normal layout. Every expanded row retains the code block's source range.
 
-Inline text is split into alternating Unicode-whitespace and non-whitespace runs. Before adding a run, layout wraps when the current row already contains content beyond its prefix/gutter and the run would exceed `width - horizontalPadding`. A single run wider than the row is not split and may exceed the requested width.
+Inline text is split into alternating Unicode-whitespace and non-whitespace runs. Before adding a run, layout wraps when the current row already contains content beyond its prefix/gutter and the run would exceed the available content width. A run too wide for an empty row is hard-split by `hardSplit`, and a prefix wider than the row is itself clipped so at least one column remains for text. Whitespace never opens a row, and `trimTrailingSpace` removes a trailing space run when a row is flushed. `clipSpans` is the final backstop: no row leaves layout wider than requested, because the terminal would wrap an over-wide row and displace the rest of the frame.
 
-Continuation rows reproduce the display width of the block prefix as spaces. Source ranges are copied from the semantic block and inline; wrapping does not calculate more precise per-row source ranges.
+Continuation rows reproduce the display width of the block prefix as spaces, and leave the line-number gutter blank rather than repeating the number. Source ranges are copied from the semantic block and inline; wrapping does not calculate more precise per-row source ranges.
 
 ### 6.1 Tables
 
-Adjacent semantic table rows form one sizing group. Each column's natural width is the maximum visible width of that cell after inline parsing. Separators consume three cells each. While the table exceeds available content, the currently widest column above three cells is reduced by one; ties select the earlier column.
+Adjacent semantic table rows form one sizing group. Each column's natural width is the maximum visible width of that cell after inline parsing. Separators consume three cells each. While the table exceeds available content, the currently widest column above three cells is reduced by one; ties select the earlier column. When every column has reached the minimum and the table still does not fit, the row is clipped at the content edge.
 
 Each cell is reparsed as inline Markdown, clipped rune by rune to its assigned cell width, and padded with plain spaces. A clipped inline retains its kind and target. Headers receive the base strong style, followed by a synthetic rule row. Inline kinds override the row's base style, so explicit emphasis, code, or links in a header use their inline styles.
 
@@ -172,13 +173,13 @@ Each cell is reparsed as inline Markdown, clipped rune by rune to its assigned c
 
 Semantic layout styles map to fixed SGR sequences. Headings are bold cyan; emphasis italic; strong bold; strike crossed out; code gray; inline code pink; quotes and rules gray; links underlined blue; search matches use yellow backgrounds; status uses reverse video.
 
-`style.New` stores the requested theme name and an enabled flag. `auto` always becomes `dark`; its `COLORFGBG` check does not currently select light. Dark and light names do not alter the style map. With `--no-color`, SGR prefixes and resets are omitted.
+`style.New` resolves the theme and stores an enabled flag. `auto` inspects the last field of `COLORFGBG`, treating background indices 0-6 and 8 as dark and anything else as light, and defaulting to dark when the variable is absent or unparseable. `darkPalette` and `lightPalette` are separate maps; the light one uses darker foregrounds. With `--no-color`, SGR prefixes and resets are omitted.
 
 `style.Span` applies `link.Open` whenever a span has a nonempty target, independently of the SGR enabled flag. `link.Valid` rejects C0 and DEL, parses with `net/url`, and allows only exact `http`, `https`, and `mailto` schemes. Valid links are wrapped with ST-terminated OSC 8 open and close sequences. Invalid targets return the unchanged label.
 
 ## 8. Search
 
-`search.Find` scans each `RenderedLine.SearchText`. Smart case is determined with `unicode.IsUpper` on the query. Case-insensitive operation applies `strings.ToLower` to both strings. Match positions are byte offsets, and the next search within a row begins at the end of the previous match, preventing overlap.
+`search.Find` scans each `RenderedLine.SearchText`. Smart case is determined with `unicode.IsUpper` on the query. Case-insensitive operation applies `strings.ToLower` to both strings, except on a row whose lowered form changes byte length, which stays case sensitive rather than corrupting every offset on that row. Match positions are byte offsets, and the next search within a row begins at the end of the previous match, preventing overlap.
 
 `search.Next` compares rendered line numbers only. Forward selection chooses the first match on a line greater than the current line; backward selection chooses the last match on a line less than the current line. If none exists it wraps to the first or last match.
 
@@ -192,7 +193,7 @@ The usable page height is terminal height minus one status row. Viewport movemen
 
 Reload calls `source.Load`, reads the current terminal size, selects terminal width or a narrower configured width, reparses and rerenders, and positions the viewport at `layout.Nearest`. `Nearest` minimizes absolute distance between requested and rendered source start lines and selects the earliest row on ties.
 
-Resize calls the same render path only indirectly: `SIGWINCH` invokes `resize`, which updates stored dimensions, but the current implementation does not call `layout.Render` on resize. The already-rendered document therefore retains its previous wrapping until a reload or editor return. Frame height and viewport bounds do use the new dimensions.
+Resize takes the same path: `SIGWINCH` invokes `resize`, which records the source line on screen, updates the stored dimensions, calls `layout.Render` at the new width, and restores the viewport with `Nearest`. Text therefore reflows to the new width while the reader keeps their place. Both paths recompute search matches, since the rows they refer to have been rebuilt.
 
 ## 10. Terminal backend
 
@@ -200,7 +201,9 @@ Resize calls the same render path only indirectly: `SIGWINCH` invokes `resize`, 
 
 Window size uses `TIOCGWINSZ` on stdout. Input uses `bufio.Reader.ReadRune`. Enter accepts CR or LF; backspace accepts DEL or BS. CSI decoding recognizes arrows, Page Up/Down, and two Home/End variants. Escape waits up to 35 ms using `select`; unknown sequences become Escape events. CSI collection is capped at five bytes.
 
-`Suspend` calls `Leave`, runs a callback, then calls `Enter`, preferring the callback error over a re-entry error. Frames are written directly to stdout in one call. The application starts each frame with cursor-home and clear-screen, emits every visible row with erase-to-end, fills unused page rows, and writes the reverse-video status row. Because `OPOST` is disabled, row endings are explicit CRLF.
+`Suspend` calls `Leave`, runs a callback, then calls `Enter`, preferring the callback error over a re-entry error. Frames are written directly to stdout in one call. The application starts each frame with cursor-home and clear-screen, emits every visible row with erase-to-end, fills unused page rows, and writes the reverse-video status row, clipped to the terminal width so it cannot wrap. Because `OPOST` is disabled, row endings are explicit CRLF.
+
+The input pump owns the one outstanding read. Its reader goroutine waits for a request before each `ReadEvent`, and the viewer goroutine tracks whether a read is already in flight, so a second read is never queued behind the first. Without that, a read requested during a resize could still be pending when the user presses `v`, and would steal the first keystroke from the editor.
 
 Signals are delivered to the application loop. `SIGWINCH` updates dimensions. `SIGINT`, `SIGTERM`, and `SIGHUP` return normally, allowing deferred `Leave`. A deferred recovery calls `Leave` and replaces any panic value with `panic("mdv: internal panic")`.
 
@@ -226,6 +229,8 @@ The repository's Go tests cover:
 - editor command splitting and adapter arguments;
 - link validation and OSC 8 output;
 - theme/no-colour behavior;
-- application paging, editing/reload behavior, input-pump ownership, CRLF frame rows, and terminal lifecycle through fakes.
+- terminal event decoding, escape-sequence handling, and size normalization;
+- command-line parsing, validation, and exit codes;
+- application paging, status text, search interaction, editing/reload behavior, resize reflow, input-pump ownership, signal handling, CRLF frame rows, and terminal lifecycle through fakes.
 
-Tests run with `go test ./...`. There are no golden files, pseudo-terminal integration tests, race-test automation, CI configuration, benchmarks, or packaging scripts in the repository.
+Tests run with `go test ./...`, and `go test -race ./...` covers the signal handler, input pump, and terminal state. There are no golden files, pseudo-terminal integration tests, CI configuration, benchmarks, or packaging scripts in the repository.

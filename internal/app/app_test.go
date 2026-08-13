@@ -149,6 +149,15 @@ func TestStatusLineFormat(t *testing.T) {
 	}
 }
 
+// The total is the file's line count, not the last block's starting line: a
+// final line that merges into the preceding paragraph must still be counted.
+func TestStatusTotalIsFileLineCount(t *testing.T) {
+	a := newApp(t, "one\ntwo\nthree\n", newFake())
+	if !strings.Contains(a.status(), "source line 1/3") {
+		t.Errorf("status = %q, want a total of 3", a.status())
+	}
+}
+
 func TestStatusPercentReachesHundred(t *testing.T) {
 	a := newApp(t, numberedLines(40), newFake())
 	a.handle(key('G'))
