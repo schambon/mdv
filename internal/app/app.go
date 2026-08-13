@@ -64,6 +64,11 @@ type App struct {
 
 // Run opens the file and drives the viewer until the user quits.
 func Run(cfg Config) error {
+	// Check the path before demanding a terminal, so a bad filename reports
+	// the real problem rather than complaining about the terminal.
+	if _, err := source.Validate(cfg.Path); err != nil {
+		return err
+	}
 	term, err := terminal.New()
 	if err != nil {
 		return err

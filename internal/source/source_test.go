@@ -88,6 +88,30 @@ func TestLoadRejects(t *testing.T) {
 	}
 }
 
+// Validate applies the same rules as Load without reading the file.
+func TestValidate(t *testing.T) {
+	dir := t.TempDir()
+	good := write(t, dir, "note.md", "# Title\n")
+
+	abs, err := Validate(good)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !filepath.IsAbs(abs) {
+		t.Errorf("returned %q, want an absolute path", abs)
+	}
+
+	for _, bad := range []string{
+		write(t, dir, "notes.txt", "x"),
+		dir,
+		filepath.Join(dir, "absent.md"),
+	} {
+		if _, err := Validate(bad); err == nil {
+			t.Errorf("Validate(%s) succeeded, want an error", bad)
+		}
+	}
+}
+
 func TestLoadAcceptsExactlyMaxSize(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "max.md")

@@ -19,27 +19,38 @@ type Source struct {
 	Bytes []byte
 }
 
-// Load reads path after validating that it names a regular Markdown file of
-// acceptable size. Relative paths are made absolute first.
-func Load(path string) (Source, error) {
+// Validate checks that path names a readable regular Markdown file of
+// acceptable size, and returns its absolute form. It reads no content, so
+// callers can reject a bad path cheaply and early.
+func Validate(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return Source{}, fmt.Errorf("resolve %s: %w", path, err)
+		return "", fmt.Errorf("resolve %s: %w", path, err)
 	}
 
 	if !hasMarkdownExtension(abs) {
-		return Source{}, fmt.Errorf("%s: not a Markdown file (expected .md or .markdown)", abs)
+		return "", fmt.Errorf("%s: not a Markdown file (expected .md or .markdown)", abs)
 	}
 
 	info, err := os.Stat(abs)
 	if err != nil {
-		return Source{}, err
+		return "", err
 	}
 	if !info.Mode().IsRegular() {
-		return Source{}, fmt.Errorf("%s: not a regular file", abs)
+		return "", fmt.Errorf("%s: not a regular file", abs)
 	}
 	if info.Size() > MaxSize {
-		return Source{}, fmt.Errorf("%s: file is %d bytes, limit is %d", abs, info.Size(), MaxSize)
+		return "", fmt.Errorf("%s: file is %d bytes, limit is %d", abs, info.Size(), MaxSize)
+	}
+
+	return abs, nil
+}
+
+// Load reads path after validating it. Relative paths are made absolute first.
+func Load(path string) (Source, error) {
+	abs, err := Validate(path)
+	if err != nil {
+		return Source{}, err
 	}
 
 	data, err := os.ReadFile(abs)
