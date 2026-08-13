@@ -1,0 +1,137 @@
+// Package style maps layout's semantic styles onto ANSI escape sequences and
+// composes them with OSC 8 hyperlinks.
+package style
+
+import (
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/schambon/mdv/internal/layout"
+	"github.com/schambon/mdv/internal/link"
+)
+
+// Theme names a palette.
+type Theme string
+
+const (
+	ThemeAuto  Theme = "auto"
+	ThemeDark  Theme = "dark"
+	ThemeLight Theme = "light"
+)
+
+const reset = "\x1b[0m"
+
+// palette maps every style to its SGR parameters.
+type palette map[layout.Style]string
+
+// darkPalette targets a dark background: bright foregrounds, low-contrast
+// furniture.
+var darkPalette = palette{
+	layout.StyleNone:         "",
+	layout.StyleHeading:      "1;36", // bold cyan
+	layout.StyleEmphasis:     "3",    // italic
+	layout.StyleStrong:       "1",    // bold
+	layout.StyleStrike:       "9",    // crossed out
+	layout.StyleCode:         "38;5;250",
+	layout.StyleInlineCode:   "38;5;211", // pink
+	layout.StyleQuote:        "38;5;245",
+	layout.StyleRule:         "38;5;240",
+	layout.StyleLink:         "4;34",   // underlined blue
+	layout.StyleSearch:       "30;43",  // black on yellow
+	layout.StyleSearchActive: "30;103", // black on bright yellow
+	layout.StyleStatus:       "7",      // reverse video
+}
+
+// lightPalette targets a light background: darker foregrounds so text stays
+// legible against white.
+var lightPalette = palette{
+	layout.StyleNone:         "",
+	layout.StyleHeading:      "1;38;5;24", // bold dark cyan
+	layout.StyleEmphasis:     "3",
+	layout.StyleStrong:       "1",
+	layout.StyleStrike:       "9",
+	layout.StyleCode:         "38;5;238",
+	layout.StyleInlineCode:   "38;5;162", // deep pink
+	layout.StyleQuote:        "38;5;242",
+	layout.StyleRule:         "38;5;250",
+	layout.StyleLink:         "4;38;5;25", // underlined dark blue
+	layout.StyleSearch:       "30;43",
+	layout.StyleSearchActive: "30;103",
+	layout.StyleStatus:       "7",
+}
+
+// Styler renders spans. The zero value is not usable; call New.
+type Styler struct {
+	theme   Theme
+	enabled bool
+	palette palette
+}
+
+// New resolves a theme name and returns a Styler. Colour may be disabled
+// independently of the theme; hyperlinks are emitted either way, since a link
+// is still useful on a monochrome terminal.
+func New(theme Theme, enabled bool) Styler {
+	resolved := theme
+	if theme == ThemeAuto {
+		resolved = detect()
+	}
+	p := darkPalette
+	if resolved == ThemeLight {
+		p = lightPalette
+	}
+	return Styler{theme: resolved, enabled: enabled, palette: p}
+}
+
+// Theme reports the resolved theme, with auto already decided.
+func (s Styler) Theme() Theme { return s.theme }
+
+// detect infers the background from COLORFGBG, which terminals set as
+// "foreground;background" with an ANSI colour index. Dark backgrounds are the
+// safer default when the variable is absent or unparseable.
+func detect() Theme {
+	value, ok := os.LookupEnv("COLORFGBG")
+	if !ok {
+		return ThemeDark
+	}
+	fields := strings.Split(value, ";")
+	background, err := strconv.Atoi(fields[len(fields)-1])
+	if err != nil {
+		return ThemeDark
+	}
+	// 0 and 8 are black, 1-6 are dark; 7 and 9-15 are light.
+	if background == 0 || background == 8 || (background >= 1 && background <= 6) {
+		return ThemeDark
+	}
+	return ThemeLight
+}
+
+// Apply wraps text in the SGR sequence for a style.
+func (s Styler) Apply(text string, style layout.Style) string {
+	if !s.enabled || text == "" {
+		return text
+	}
+	params, ok := s.palette[style]
+	if !ok || params == "" {
+		return text
+	}
+	return "\x1b[" + params + "m" + text + reset
+}
+
+// Span renders one span: its style, then its hyperlink if it has a safe target.
+func (s Styler) Span(span layout.Span) string {
+	text := s.Apply(span.Text, span.Style)
+	if span.LinkTarget != "" {
+		text = link.Wrap(text, span.LinkTarget)
+	}
+	return text
+}
+
+// Line renders a whole row of spans.
+func (s Styler) Line(line layout.RenderedLine) string {
+	var sb strings.Builder
+	for _, span := range line.Spans {
+		sb.WriteString(s.Span(span))
+	}
+	return sb.String()
+}
