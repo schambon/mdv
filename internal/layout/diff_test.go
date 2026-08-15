@@ -289,9 +289,11 @@ func TestWordDiffStyling(t *testing.T) {
 		Width: 100, SideBySide: true,
 	})
 
+	// The diff colour is a background, leaving Style free for what the text
+	// is rather than what happened to it.
 	var removedWords, addedWords []string
 	for _, s := range d.Lines[0].Spans {
-		switch s.Style {
+		switch s.Background {
 		case StyleDiffRemoveWord:
 			removedWords = append(removedWords, s.Text)
 		case StyleDiffAddWord:

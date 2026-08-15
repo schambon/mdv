@@ -200,7 +200,7 @@ func (r *diffRenderer) pane(line *RenderedLine, s side, wrapped [][]run, i, pane
 	used := 0
 	if i < len(wrapped) {
 		for _, rn := range wrapped[i] {
-			addSpan(line, Span{Text: rn.text, Cells: rn.cells, Style: rn.style, Source: source})
+			addSpan(line, Span{Text: rn.text, Cells: rn.cells, Style: rn.style, Background: rn.background, Source: source})
 			used += rn.cells
 		}
 	}
@@ -212,7 +212,7 @@ func (r *diffRenderer) pane(line *RenderedLine, s side, wrapped [][]run, i, pane
 		fill = StyleNone
 	}
 	if pad := content - used; pad > 0 {
-		addSpan(line, Span{Text: strings.Repeat(" ", pad), Cells: pad, Style: fill, Source: source})
+		addSpan(line, Span{Text: strings.Repeat(" ", pad), Cells: pad, Background: fill, Source: source})
 	}
 }
 
@@ -258,14 +258,14 @@ func (r *diffRenderer) unifiedSide(left, right side, source doc.SourceRange) {
 
 		used := 0
 		for _, rn := range runs {
-			addSpan(&line, Span{Text: rn.text, Cells: rn.cells, Style: rn.style, Source: source})
+			addSpan(&line, Span{Text: rn.text, Cells: rn.cells, Style: rn.style, Background: rn.background, Source: source})
 			used += rn.cells
 		}
 		// Painting the row out to the edge makes an added or removed line read
 		// as a band rather than a ragged stripe.
 		if text.base != StyleNone {
 			if pad := content - used; pad > 0 {
-				addSpan(&line, Span{Text: strings.Repeat(" ", pad), Cells: pad, Style: text.base, Source: source})
+				addSpan(&line, Span{Text: strings.Repeat(" ", pad), Cells: pad, Background: text.base, Source: source})
 			}
 		}
 
@@ -295,7 +295,7 @@ func (r *diffRenderer) markerSpan(line *RenderedLine, s side, show bool, source 
 	if show && s.marker != "" {
 		marker = s.marker + " "
 	}
-	addSpan(line, Span{Text: marker, Cells: markerCells, Style: s.base, Source: source})
+	addSpan(line, Span{Text: marker, Cells: markerCells, Background: s.base, Source: source})
 }
 
 // fold draws a collapsed run of unchanged rows as one marker row.
@@ -330,13 +330,13 @@ func (r *diffRenderer) runs(s side, content int, source doc.SourceRange) []run {
 	// Tabs are expanded against a running column so a tab in the middle of a
 	// line lands where the reader expects, not where the terminal would put it.
 	col := 0
-	emit := func(text string, style Style) []run {
+	emit := func(text string, background Style) []run {
 		expanded, next := expandTabs(text, col)
 		col = next
 		if expanded == "" {
 			return nil
 		}
-		return []run{{text: expanded, cells: Width(expanded), style: style, source: source}}
+		return []run{{text: expanded, cells: Width(expanded), background: background, source: source}}
 	}
 
 	if s.line.Words == nil {
@@ -348,11 +348,11 @@ func (r *diffRenderer) runs(s side, content int, source doc.SourceRange) []run {
 		if seg.Op != difftext.OpEqual && seg.Op != s.op {
 			continue // the other side's half of the change
 		}
-		style := s.base
+		background := s.base
 		if seg.Op == s.op {
-			style = s.emphasis
+			background = s.emphasis
 		}
-		out = append(out, emit(seg.Text, style)...)
+		out = append(out, emit(seg.Text, background)...)
 	}
 	return out
 }
@@ -392,7 +392,10 @@ func packRuns(runs []run, avail int) [][]run {
 				_, size := decodeRune(text)
 				chunk, w = text[:size], Width(text[:size])
 			}
-			cur = append(cur, run{text: chunk, cells: w, style: rn.style, source: rn.source})
+			cur = append(cur, run{
+				text: chunk, cells: w,
+				style: rn.style, background: rn.background, source: rn.source,
+			})
 			used += w
 			text = text[len(chunk):]
 		}

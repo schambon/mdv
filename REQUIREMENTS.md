@@ -30,6 +30,8 @@ Diff-mode options are listed in §9. They parse in both forms but have no effect
 
 Width must be non-negative. A positive width caps rendering only when it is narrower than the terminal. Invalid arguments return exit status 2; startup or runtime errors return 1; normal completion returns 0.
 
+Flags may appear on either side of a subcommand: `mdv --no-split diff a b` and `mdv diff --no-split a b` are equivalent. When the same flag is given twice, the later one wins.
+
 Both stdin and stdout must be interactive character devices. The path is validated before a terminal is required, so a bad filename reports the file problem rather than a terminal problem. On platforms other than macOS, startup fails with an unsupported-platform error.
 
 ## 3. Viewer

@@ -137,13 +137,46 @@ func (s Styler) Apply(text string, style layout.Style) string {
 	return "\x1b[" + params + "m" + text + reset
 }
 
-// Span renders one span: its style, then its hyperlink if it has a safe target.
+// Span renders one span: its background and style, then its hyperlink if it
+// has a safe target.
 func (s Styler) Span(span layout.Span) string {
-	text := s.Apply(span.Text, span.Style)
+	text := s.paint(span.Text, span.Background, span.Style)
 	if span.LinkTarget != "" {
 		text = link.Wrap(text, span.LinkTarget)
 	}
 	return text
+}
+
+// paint wraps text in one SGR sequence carrying the background parameters
+// followed by the foreground ones.
+//
+// The two are emitted together rather than nested because Apply appends a
+// reset, and a nested reset would clear the background halfway through the
+// span. The order matters as well: a search hit's style is "30;43", which
+// carries its own background in the foreground slot, so putting the
+// foreground last lets a match stay visible on top of a diff band.
+func (s Styler) paint(text string, background, style layout.Style) string {
+	if !s.enabled || text == "" {
+		return text
+	}
+
+	params := joinParams(s.palette[background], s.palette[style])
+	if params == "" {
+		return text
+	}
+	return "\x1b[" + params + "m" + text + reset
+}
+
+// joinParams concatenates SGR parameter lists, skipping empty ones so a style
+// that maps to nothing cannot produce a stray separator.
+func joinParams(values ...string) string {
+	var set []string
+	for _, v := range values {
+		if v != "" {
+			set = append(set, v)
+		}
+	}
+	return strings.Join(set, ";")
 }
 
 // Line renders a whole row of spans.

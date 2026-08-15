@@ -151,3 +151,91 @@ func TestLineConcatenatesSpans(t *testing.T) {
 		t.Errorf("Line = %q, want %q", got, "a b c")
 	}
 }
+
+// A span carrying both a background and a style must emit ONE sequence with
+// both, not two nested ones: a nested reset would clear the background
+// halfway through the span.
+func TestSpanCombinesBackgroundAndStyle(t *testing.T) {
+	s := New(ThemeDark, true)
+
+	got := s.Span(layout.Span{
+		Text:       "heading",
+		Style:      layout.StyleHeading,
+		Background: layout.StyleDiffAdd,
+	})
+
+	want := "\x1b[48;5;22;1;36mheading\x1b[0m"
+	if got != want {
+		t.Errorf("Span = %q, want %q", got, want)
+	}
+	if strings.Count(got, reset) != 1 {
+		t.Errorf("want exactly one reset, got %q", got)
+	}
+}
+
+// Background parameters come first so a search hit — whose style "30;43"
+// carries its own background in the foreground slot — still wins over a diff
+// band underneath it.
+func TestSearchStyleWinsOverDiffBackground(t *testing.T) {
+	s := New(ThemeDark, true)
+
+	got := s.Span(layout.Span{
+		Text:       "hit",
+		Style:      layout.StyleSearch,
+		Background: layout.StyleDiffRemove,
+	})
+
+	if !strings.HasSuffix(strings.TrimSuffix(got, reset), "30;43mhit") {
+		t.Errorf("search parameters should come last, got %q", got)
+	}
+}
+
+// StyleNone maps to an empty parameter list; joining naively would emit a
+// stray separator like \x1b[;1;36m.
+func TestBackgroundOnlyAndStyleOnly(t *testing.T) {
+	s := New(ThemeDark, true)
+
+	got := s.Span(layout.Span{Text: "x", Background: layout.StyleDiffAdd})
+	if want := "\x1b[48;5;22mx\x1b[0m"; got != want {
+		t.Errorf("background only = %q, want %q", got, want)
+	}
+
+	got = s.Span(layout.Span{Text: "x", Style: layout.StyleStrong})
+	if want := "\x1b[1mx\x1b[0m"; got != want {
+		t.Errorf("style only = %q, want %q", got, want)
+	}
+
+	if got := s.Span(layout.Span{Text: "x"}); got != "x" {
+		t.Errorf("neither = %q, want plain text", got)
+	}
+}
+
+func TestBackgroundSuppressedWithoutColor(t *testing.T) {
+	s := New(ThemeDark, false)
+
+	got := s.Span(layout.Span{
+		Text:       "x",
+		Style:      layout.StyleHeading,
+		Background: layout.StyleDiffAdd,
+	})
+	if got != "x" {
+		t.Errorf("--no-color should emit plain text, got %q", got)
+	}
+}
+
+func TestJoinParams(t *testing.T) {
+	tests := []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"", ""}, ""},
+		{[]string{"48;5;22", ""}, "48;5;22"},
+		{[]string{"", "1;36"}, "1;36"},
+		{[]string{"48;5;22", "1;36"}, "48;5;22;1;36"},
+	}
+	for _, tt := range tests {
+		if got := joinParams(tt.in...); got != tt.want {
+			t.Errorf("joinParams(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

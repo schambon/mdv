@@ -49,10 +49,17 @@ const (
 )
 
 // Span is a run of text sharing one style and link target.
+//
+// Style and Background are separate because they answer different questions:
+// Style is what the text *is* (a heading, a link, a code span), Background is
+// what has *happened to it* (added, removed, part of a changed word). A diff
+// of Markdown needs both at once — a changed heading is still a heading — and
+// a single enum could only carry one.
 type Span struct {
 	Text       string
 	Cells      int
 	Style      Style
+	Background Style
 	LinkTarget string
 	Source     doc.SourceRange
 }
@@ -245,6 +252,7 @@ type run struct {
 	cells      int
 	space      bool
 	style      Style
+	background Style
 	linkTarget string
 	source     doc.SourceRange
 }
@@ -328,7 +336,11 @@ func wrapRuns(runs []run, avail int) [][]run {
 				if i > 0 {
 					flush()
 				}
-				emit(run{text: chunk, cells: Width(chunk), style: rn.style, linkTarget: rn.linkTarget, source: rn.source})
+				emit(run{
+					text: chunk, cells: Width(chunk),
+					style: rn.style, background: rn.background,
+					linkTarget: rn.linkTarget, source: rn.source,
+				})
 			}
 			continue
 		}

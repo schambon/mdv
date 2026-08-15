@@ -97,3 +97,70 @@ func TestBareDiffIsAMissingArgumentError(t *testing.T) {
 		t.Errorf("code = %d, want 2", code)
 	}
 }
+
+// Flags must work on either side of the subcommand. Go's flag package stops at
+// the first non-flag argument, so the form people reach for first —
+// `mdv diff --no-split a b` — used to treat --no-split as a filename.
+func TestDiffFlagsOnEitherSideOfSubcommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"before", []string{"--no-split", "-U", "7", "diff", "a", "b"}},
+		{"after", []string{"diff", "--no-split", "-U", "7", "a", "b"}},
+		{"straddling", []string{"--no-split", "diff", "-U", "7", "a", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, _, code := parse(t, tt.args...)
+			if code != 0 {
+				t.Fatalf("code = %d, want 0", code)
+			}
+			if cfg.SideBySide {
+				t.Error("--no-split was not applied")
+			}
+			if cfg.Context != 7 {
+				t.Errorf("Context = %d, want 7", cfg.Context)
+			}
+			if cfg.Path != "a" || cfg.Compare != "b" {
+				t.Errorf("got %q → %q, want a → b", cfg.Path, cfg.Compare)
+			}
+		})
+	}
+}
+
+// Common flags keep working after the subcommand too, not just diff-specific
+// ones.
+func TestCommonFlagsAfterSubcommand(t *testing.T) {
+	cfg, _, code := parse(t, "diff", "-l", "-w", "100", "--no-color", "a", "b")
+	if code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if !cfg.LineNumbers {
+		t.Error("-l was not applied")
+	}
+	if cfg.Width != 100 {
+		t.Errorf("Width = %d, want 100", cfg.Width)
+	}
+	if cfg.Color {
+		t.Error("--no-color was not applied")
+	}
+}
+
+// A later flag wins over an earlier one, whichever side of the subcommand each
+// is on, because both passes fill the same options.
+func TestFlagAfterSubcommandOverridesBefore(t *testing.T) {
+	cfg, _, code := parse(t, "-w", "50", "diff", "-w", "120", "a", "b")
+	if code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if cfg.Width != 120 {
+		t.Errorf("Width = %d, want the later 120", cfg.Width)
+	}
+}
+
+func TestUnknownFlagAfterSubcommandIsUsageError(t *testing.T) {
+	if _, _, code := parse(t, "diff", "--nope", "a", "b"); code != 2 {
+		t.Errorf("code = %d, want 2", code)
+	}
+}

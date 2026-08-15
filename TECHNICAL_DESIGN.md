@@ -57,7 +57,7 @@ two paths -> source.LoadAny -> difftext.Lines -> diffdoc.Build -> diffdoc.Docume
 
 ## 3. CLI and source loading
 
-`cmd/mdv` uses `flag.FlagSet` with `ContinueOnError`. It accepts exactly one positional path and the flags documented in `REQUIREMENTS.md`. Style validation is limited to `auto`, `dark`, and `light`; width must be non-negative.
+`cmd/mdv` uses `flag.FlagSet` with `ContinueOnError`. Flags are parsed in two passes over one shared `options` struct, because Go's `flag` package stops at the first non-flag argument: the first pass consumes the flags before a subcommand, and if a subcommand is what stopped it, a second `FlagSet` bound to the same fields consumes the flags after it. Both orders therefore behave identically, and a repeated flag resolves to its last occurrence. It accepts exactly one positional path and the flags documented in `REQUIREMENTS.md`. Style validation is limited to `auto`, `dark`, and `light`; width must be non-negative.
 
 `source.Validate`:
 
@@ -186,6 +186,8 @@ Each cell is reparsed as inline Markdown and wrapped to its assigned column widt
 `CellWidth` returns zero for NUL, U+200D, U+FE00–U+FE0F, and Unicode Mn/Me categories. It returns two for the hard-coded East Asian, full-width, supplementary CJK, and U+1F300–U+1FAFF ranges. Everything else returns one. `Width` sums rune widths. There is no tab expansion or grapheme segmentation.
 
 ## 7. Styles and hyperlinks
+
+A `Span` carries two styles: `Style` is what the text *is* (heading, link, code span) and `Background` is what has happened to it (added, removed, a changed word). Diffing Markdown needs both at once, since a changed heading is still a heading. `Styler.paint` emits them as a single SGR sequence — background parameters, then foreground, then one reset. They are not nested because `Apply` appends a reset that would clear the background mid-span, and the order is deliberate: a search hit's `30;43` carries its own background in the foreground slot, so putting the foreground last keeps a match visible on top of a diff band. `joinParams` skips empty parameter lists so `StyleNone` cannot produce a stray separator.
 
 Semantic layout styles map to fixed SGR sequences. Headings are bold cyan; emphasis italic; strong bold; strike crossed out; code gray; inline code pink; quotes and rules gray; links underlined blue; search matches use yellow backgrounds; status uses reverse video.
 
