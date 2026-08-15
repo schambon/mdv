@@ -64,8 +64,9 @@ func parseCells(row doc.Block) []cell {
 }
 
 // columnWidths sizes columns to their natural width, then shrinks the widest
-// column one cell at a time until the table fits. Ties pick the earlier column,
-// and no column drops below minColumnCells.
+// column one cell at a time until the table fits, so as little wrapping as
+// possible is needed. Ties pick the earlier column, and no column drops below
+// minColumnCells.
 func columnWidths(rows [][]cell, columns, available int) []int {
 	widths := make([]int, columns)
 	for _, row := range rows {
@@ -105,52 +106,65 @@ func total(widths []int) int {
 	return sum
 }
 
-// tableRow draws one row, clipping and padding each cell to its column width.
+// tableRow draws one logical row, wrapping each cell to its column width. A
+// cell whose content does not fit in one line spills onto further physical
+// rows; the row occupies as many physical rows as its tallest cell.
 func (r *renderer) tableRow(row doc.Block, cells []cell, widths []int) {
-	line := r.newRow(row, true)
-	contentStart := len(line.Spans)
 	base := StyleNone
 	if row.Header {
 		base = StyleStrong
 	}
 
+	columnLines := make([][][]run, len(widths))
+	height := 1
 	for c, w := range widths {
-		if c > 0 {
-			r.appendSpan(&line, Span{
-				Text: cellSeparator, Cells: separatorCells,
-				Style: StyleRule, Source: row.Source,
-			})
-		}
-
-		used := 0
+		var wrapped [][]run
 		if c < len(cells) {
-			for _, in := range cells[c].inlines {
-				if used >= w {
-					break
-				}
-				text, cellsUsed := clip(in.Text, w-used)
-				if text == "" {
-					continue
-				}
-				r.appendSpan(&line, Span{
-					Text: text, Cells: cellsUsed,
-					Style:      inlineStyle(in.Kind, base),
-					LinkTarget: in.Target,
-					Source:     in.Source,
-				})
-				used += cellsUsed
-			}
+			wrapped = wrapRuns(r.runs(cells[c].inlines, base), w)
+		} else {
+			wrapped = [][]run{nil}
 		}
-		if used < w {
-			filler := strings.Repeat(" ", w-used)
-			r.appendSpan(&line, Span{Text: filler, Cells: w - used, Style: base, Source: row.Source})
+		columnLines[c] = wrapped
+		if len(wrapped) > height {
+			height = len(wrapped)
 		}
 	}
 
-	// A table with more columns than the row has room for cannot be squeezed
-	// below the per-column minimum, so the overflow is cut here.
-	clipSpans(&line, contentStart, r.contentWidth())
-	r.lines = append(r.lines, line)
+	for li := 0; li < height; li++ {
+		line := r.newRow(row, li == 0)
+		contentStart := len(line.Spans)
+
+		for c, w := range widths {
+			if c > 0 {
+				r.appendSpan(&line, Span{
+					Text: cellSeparator, Cells: separatorCells,
+					Style: StyleRule, Source: row.Source,
+				})
+			}
+
+			used := 0
+			if li < len(columnLines[c]) {
+				for _, rn := range columnLines[c][li] {
+					r.appendSpan(&line, Span{
+						Text: rn.text, Cells: rn.cells,
+						Style:      rn.style,
+						LinkTarget: rn.linkTarget,
+						Source:     rn.source,
+					})
+					used += rn.cells
+				}
+			}
+			if used < w {
+				filler := strings.Repeat(" ", w-used)
+				r.appendSpan(&line, Span{Text: filler, Cells: w - used, Style: base, Source: row.Source})
+			}
+		}
+
+		// A table with more columns than the row has room for cannot be
+		// squeezed below the per-column minimum, so the overflow is cut here.
+		clipSpans(&line, contentStart, r.contentWidth())
+		r.lines = append(r.lines, line)
+	}
 }
 
 // tableRule draws the rule under a header row.

@@ -201,15 +201,6 @@ func retext(line *RenderedLine) {
 	line.SearchText = sb.String()
 }
 
-// trimTrailingSpace drops whitespace-only spans from the end of a row, so a
-// row broken after a space does not carry that space to the line end.
-func trimTrailingSpace(line *RenderedLine, from int) {
-	for len(line.Spans) > from && isSpaceRun(line.Spans[len(line.Spans)-1].Text) {
-		line.Spans = line.Spans[:len(line.Spans)-1]
-	}
-	retext(line)
-}
-
 // clipSpans truncates a row's spans, starting at index from, so they occupy at
 // most cells columns. It is the backstop that keeps any row from overflowing
 // the frame the terminal draws.
@@ -261,33 +252,50 @@ func (r *renderer) wrapped(b doc.Block, prefix string, base Style) {
 	}
 	avail := limit - prefixCells
 
-	line := r.newRow(b, true)
-	if prefix != "" {
-		r.appendSpan(&line, Span{Text: prefix, Cells: prefixCells, Style: base, Source: b.Source})
+	for i, wl := range wrapRuns(runs, avail) {
+		line := r.newRow(b, i == 0)
+		if prefixCells > 0 {
+			text, style := prefix, base
+			if i > 0 {
+				text, style = strings.Repeat(" ", prefixCells), StyleNone
+			}
+			r.appendSpan(&line, Span{Text: text, Cells: prefixCells, Style: style, Source: b.Source})
+		}
+		for _, rn := range wl {
+			r.appendSpan(&line, Span{
+				Text: rn.text, Cells: rn.cells, Style: rn.style,
+				LinkTarget: rn.linkTarget, Source: rn.source,
+			})
+		}
+		r.lines = append(r.lines, line)
 	}
-	contentStart := len(line.Spans)
+}
+
+// wrapRuns breaks runs into rows of at most avail cells each, breaking
+// between runs and hard-splitting a single run too wide for an empty row.
+// Trailing whitespace is dropped from every row, and whitespace never opens
+// one. It always returns at least one (possibly empty) row.
+func wrapRuns(runs []run, avail int) [][]run {
+	if avail < 1 {
+		avail = 1
+	}
+
+	var lines [][]run
+	var cur []run
 	used := 0
 	hasContent := false
 
 	flush := func() {
-		trimTrailingSpace(&line, contentStart)
-		r.lines = append(r.lines, line)
-		line = r.newRow(b, false)
-		if prefixCells > 0 {
-			blank := strings.Repeat(" ", prefixCells)
-			r.appendSpan(&line, Span{Text: blank, Cells: prefixCells, Style: StyleNone, Source: b.Source})
+		for len(cur) > 0 && cur[len(cur)-1].space {
+			cur = cur[:len(cur)-1]
 		}
-		contentStart = len(line.Spans)
-		used = 0
-		hasContent = false
+		lines = append(lines, cur)
+		cur, used, hasContent = nil, 0, false
 	}
 
-	emit := func(text string, rn run) {
-		r.appendSpan(&line, Span{
-			Text: text, Cells: Width(text), Style: rn.style,
-			LinkTarget: rn.linkTarget, Source: rn.source,
-		})
-		used += Width(text)
+	emit := func(rn run) {
+		cur = append(cur, rn)
+		used += rn.cells
 		hasContent = true
 	}
 
@@ -305,7 +313,7 @@ func (r *renderer) wrapped(b doc.Block, prefix string, base Style) {
 				if i > 0 {
 					flush()
 				}
-				emit(chunk, rn)
+				emit(run{text: chunk, cells: Width(chunk), style: rn.style, linkTarget: rn.linkTarget, source: rn.source})
 			}
 			continue
 		}
@@ -317,11 +325,11 @@ func (r *renderer) wrapped(b doc.Block, prefix string, base Style) {
 		if !hasContent && rn.space {
 			continue
 		}
-		emit(rn.text, rn)
+		emit(rn)
 	}
 
-	trimTrailingSpace(&line, contentStart)
-	r.lines = append(r.lines, line)
+	flush()
+	return lines
 }
 
 // runs converts inlines into wrapping units. Inline kinds override the block's

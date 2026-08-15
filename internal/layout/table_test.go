@@ -155,10 +155,63 @@ func TestSeparateTablesSizeIndependently(t *testing.T) {
 	}
 }
 
-func TestTableCellsClippedNotWrapped(t *testing.T) {
+// A viewer's job is to show text, not hide it: a cell too wide for its
+// column wraps onto further physical rows rather than being truncated.
+func TestTableCellsWrapNotClip(t *testing.T) {
 	src := "| a long cell value that will not fit |\n|---|\n| x |\n"
 	d := render(t, src, Options{Width: 20})
-	if len(d.Lines) != 3 {
-		t.Errorf("got %d rows, want the cell clipped into 3 rows, not wrapped", len(d.Lines))
+	if len(d.Lines) <= 3 {
+		t.Fatalf("got %d rows, want the header cell wrapped onto more than one row", len(d.Lines))
+	}
+
+	var header strings.Builder
+	for _, line := range d.Lines {
+		if line.Source.Start.Line != 1 {
+			break
+		}
+		header.WriteString(line.SearchText)
+	}
+	for _, word := range []string{"a", "long", "cell", "value", "that", "will", "not", "fit"} {
+		if !strings.Contains(header.String(), word) {
+			t.Errorf("wrapped header %q missing word %q", header.String(), word)
+		}
+	}
+}
+
+// Every physical row a wrapped cell spills onto still fits within the width,
+// and every wrapped row of a table shares the header's source range.
+func TestTableWrappedRowsFitAndKeepSource(t *testing.T) {
+	src := "| a long cell value that will not fit at all in a narrow column |\n" +
+		"|---|\n| short |\n"
+	d := render(t, src, Options{Width: 16})
+
+	for i, row := range texts(d) {
+		if w := Width(row); w > 16 {
+			t.Errorf("row %d %q is %d cells, over 16", i, row, w)
+		}
+	}
+	for i, line := range d.Lines[:len(d.Lines)-2] { // header rows, before the rule and body
+		if line.Source.Start.Line != 1 {
+			t.Errorf("wrapped header row %d has source line %d, want 1", i, line.Source.Start.Line)
+		}
+	}
+}
+
+// A cell that wraps onto more physical rows than its neighbours pads the
+// shorter cells in the same logical row with blank space.
+func TestTableWrappedRowPadsShorterCells(t *testing.T) {
+	src := "| a long cell value that will not fit | x |\n|---|---|\n| p | q |\n"
+	d := render(t, src, Options{Width: 20})
+
+	// The header's second physical row should still show the column
+	// separator, with the short "x" column blank beneath itself.
+	found := false
+	for _, line := range d.Lines {
+		if line.Source.Start.Line == 1 && strings.Contains(line.SearchText, "│") && !strings.Contains(line.SearchText, "x") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a wrapped header continuation row with a blank short column")
 	}
 }
