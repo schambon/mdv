@@ -28,7 +28,9 @@ const usage = `mdv [options] FILE
 mdv [options] diff OLD NEW
 
 An interactive Markdown viewer. FILE must be a .md or .markdown file.
-The diff form compares two files of any type side by side.
+The diff form compares two files of any type side by side. Two Markdown
+files are compared as rendered documents, so reflowing a paragraph is not
+a change; --raw compares them as lines of text instead.
 Press h inside the viewer for the key bindings.
 
 Options:
@@ -79,6 +81,8 @@ type options struct {
 	noFold      bool
 	noSplit     bool
 	noWordDiff  bool
+	raw         bool
+	markdown    bool
 }
 
 // flagSet builds a parser bound to these options. It is called more than once
@@ -106,6 +110,8 @@ func (o *options) flagSet(stderr io.Writer) *flag.FlagSet {
 	fs.BoolVar(&o.noFold, "no-fold", o.noFold, "diff: show all unchanged lines instead of folding them")
 	fs.BoolVar(&o.noSplit, "no-split", o.noSplit, "diff: use one column instead of two panes")
 	fs.BoolVar(&o.noWordDiff, "no-word-diff", o.noWordDiff, "diff: do not highlight changes within a line")
+	fs.BoolVar(&o.raw, "raw", o.raw, "diff: compare Markdown as lines of text, not as rendered blocks")
+	fs.BoolVar(&o.markdown, "md", o.markdown, "diff: compare as rendered Markdown whatever the file extensions")
 	return fs
 }
 
@@ -169,14 +175,21 @@ func parseArgs(args []string, stdout, stderr io.Writer) (cfg app.Config, done bo
 		context = -1
 	}
 
+	if opts.raw && opts.markdown {
+		fmt.Fprintf(stderr, "mdv: --raw and --md contradict each other\n")
+		return cfg, false, errUsage
+	}
+
 	cfg = app.Config{
-		Width:       opts.width,
-		Theme:       resolved,
-		LineNumbers: opts.lineNumbers,
-		Color:       !opts.noColor,
-		Context:     context,
-		SideBySide:  !opts.noSplit,
-		WordDiff:    !opts.noWordDiff,
+		Width:         opts.width,
+		Theme:         resolved,
+		LineNumbers:   opts.lineNumbers,
+		Color:         !opts.noColor,
+		Context:       context,
+		SideBySide:    !opts.noSplit,
+		WordDiff:      !opts.noWordDiff,
+		ForceRaw:      opts.raw,
+		ForceMarkdown: opts.markdown,
 	}
 
 	if command == diffCommand {

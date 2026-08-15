@@ -65,6 +65,9 @@ func RenderDiff(d diffdoc.Document, opts DiffOptions) DiffDocument {
 		r.index = i
 		r.row(row)
 	}
+	if n := len(d.Rows); n > 0 {
+		r.close(rowSource(d.Rows[n-1]))
+	}
 	return DiffDocument{Document: Document{Lines: r.lines}, Rows: r.rows}
 }
 
@@ -75,6 +78,11 @@ type diffRenderer struct {
 	index      int // the diffdoc row being drawn
 	lines      []RenderedLine
 	rows       []int
+
+	// Markdown mode alternates between full-width and split sections; these
+	// track which one is open so a divider can mark the boundary.
+	inSplit     bool
+	lastWasFold bool
 }
 
 // emit records one physical row along with the diff row it belongs to. Every
@@ -123,7 +131,10 @@ func (r *diffRenderer) contentCells(pane int) int {
 func (r *diffRenderer) row(row diffdoc.Row) {
 	switch {
 	case row.Kind == diffdoc.RowFolded:
+		r.section(false, true, rowSource(row))
 		r.fold(row)
+	case markdownRow(row):
+		r.mdRow(row)
 	case r.sideBySide:
 		r.splitRow(row)
 	default:
@@ -301,9 +312,16 @@ func (r *diffRenderer) markerSpan(line *RenderedLine, s side, show bool, source 
 // fold draws a collapsed run of unchanged rows as one marker row.
 func (r *diffRenderer) fold(row diffdoc.Row) {
 	n := row.Count()
+
+	// What a row stands for depends on the mode: a line of text, or a whole
+	// Markdown block. Saying "lines" for blocks would misreport the size of
+	// what is hidden.
 	noun := "lines"
+	if len(row.Hidden) > 0 && markdownRow(row.Hidden[0]) {
+		noun = "blocks"
+	}
 	if n == 1 {
-		noun = "line"
+		noun = strings.TrimSuffix(noun, "s")
 	}
 	text := "⋯ " + strconv.Itoa(n) + " unchanged " + noun + " "
 

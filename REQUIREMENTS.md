@@ -149,6 +149,8 @@ Additional options:
     --no-fold          show all unchanged lines instead of folding them
     --no-split         use one column instead of two panes
     --no-word-diff     do not highlight changes within a line
+    --raw              compare Markdown as text, not as rendered blocks
+    --md               compare as rendered Markdown whatever the extensions
 ```
 
 Context must not be negative. `-w`, `-s`, `-l`, and `--no-color` keep their meanings; `-l` shows both files' line numbers, each in its own gutter sized to the widest number the diff contains.
@@ -184,7 +186,19 @@ A run of adjacent changed rows is one hunk. Hunk navigation does not wrap; it re
 
 `v` opens the new file, at the line the row maps to; a row that exists only in the old file maps to its old line number. `r` re-reads both files. Search, paging, resize, and reflow behave as in the viewer, and search matches are recomputed whenever folding or a resize rebuilds the rows.
 
-Markdown is not rendered in diff mode: two `.md` files are compared as text. Comparing rendered Markdown is not implemented.
+### 9.1 Markdown-aware comparison
+
+Two files whose extensions are both `.md`/`.markdown` are compared as **rendered documents** rather than as lines of text. `--raw` forces the line comparison; `--md` forces the Markdown comparison whatever the extensions. Giving both is a usage error.
+
+The unit of comparison is a parsed block — a paragraph, heading, quote, list item, or a whole table — rather than a source line. Because the parser joins a paragraph's lines with single spaces, reflowing a paragraph produces an identical block and therefore **no difference at all**, and editing one word inside a wrapped paragraph is one changed block rather than one changed line for every line the edit reflowed. Two blocks are the same only if their kind, heading level, prefix, table-header flag, and every inline's kind, text and link target match; a changed link target is a difference even though the visible text is unchanged.
+
+A table is compared as a single unit, because its columns are sized across all its rows: one changed cell marks the whole table changed.
+
+Unchanged blocks are drawn once across the full width, since both sides are identical and two half-width copies would wrap prose needlessly. Only changed blocks are drawn in two panes. A horizontal rule marks every transition between a full-width section and a split one, and closes a split section that reaches the end of the document. Below the two-pane width threshold, a changed block is drawn stacked: the old version, then the new.
+
+Markdown styling survives the comparison: a changed heading keeps its heading colour and gains the added or removed background behind it.
+
+In this mode a row counts as a block, so the fold marker reads "N unchanged blocks" and the status summary reads `+N -M blocks`.
 
 ## 10. Terminal lifecycle
 

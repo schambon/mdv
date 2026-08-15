@@ -81,6 +81,10 @@ func read(path string, validate func(string) (string, error)) (Source, error) {
 	return Source{Path: abs, Name: filepath.Base(abs), Bytes: data}, nil
 }
 
+// IsMarkdown reports whether a path names a Markdown file by extension. Diff
+// mode uses it to decide how to compare two files, not whether to accept them.
+func IsMarkdown(path string) bool { return hasMarkdownExtension(path) }
+
 func hasMarkdownExtension(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".md", ".markdown":

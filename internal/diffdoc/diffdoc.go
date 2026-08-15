@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/schambon/mdv/internal/difftext"
+	"github.com/schambon/mdv/internal/doc"
 )
 
 // RowKind classifies an aligned row.
@@ -32,6 +33,10 @@ type Line struct {
 	// sides are similar enough to be worth aligning word by word. It is nil
 	// when the line should be highlighted as wholly changed.
 	Words []difftext.Segment
+	// Blocks is set in Markdown mode and holds the parsed blocks this side of
+	// the row stands for, to be rendered rather than printed as text. Text
+	// stays the unit's visible text, which is what the word diff runs on.
+	Blocks []doc.Block
 }
 
 // Present reports whether this side has a line at all, as opposed to being

@@ -36,6 +36,25 @@ type Config struct {
 	Context    int // unchanged lines kept around a change; negative disables folding
 	SideBySide bool
 	WordDiff   bool
+	// ForceRaw and ForceMarkdown override the automatic choice between
+	// comparing two files as rendered Markdown and comparing them as text.
+	ForceRaw      bool
+	ForceMarkdown bool
+}
+
+// markdownDiff reports whether the two files should be compared as rendered
+// Markdown rather than as lines of text. Two Markdown files are compared as
+// Markdown by default, because a rewrapped paragraph is not a change; --raw
+// asks for the literal line diff, which is a reasonable thing to want.
+func (c Config) markdownDiff() bool {
+	switch {
+	case !c.diffMode(), c.ForceRaw:
+		return false
+	case c.ForceMarkdown:
+		return true
+	default:
+		return source.IsMarkdown(c.Path) && source.IsMarkdown(c.Compare)
+	}
 }
 
 // diffMode reports whether the viewer is comparing two files.
@@ -208,10 +227,16 @@ func (a *App) load() error {
 // which folds are open is part of the row list, so a resize must lay the diff
 // out again without discarding what the reader has expanded.
 func (a *App) buildDiff() {
+	opts := diffdoc.Options{Context: a.cfg.Context, WordDiff: a.cfg.WordDiff}
+
+	if a.cfg.markdownDiff() {
+		a.diff = diffdoc.BuildMarkdown(md.Parse(a.src.Bytes), md.Parse(a.compare.Bytes), opts)
+		return
+	}
 	a.diff = diffdoc.Build(
 		diffdoc.SplitLines(a.src.Bytes),
 		diffdoc.SplitLines(a.compare.Bytes),
-		diffdoc.Options{Context: a.cfg.Context, WordDiff: a.cfg.WordDiff},
+		opts,
 	)
 }
 
@@ -414,6 +439,11 @@ func (a *App) diffSummary() string {
 
 	if added == 0 && removed == 0 {
 		return "identical"
+	}
+	// In Markdown mode a row is a block, not a line, and an unqualified
+	// "+3 -1" would be read as lines.
+	if a.cfg.markdownDiff() {
+		return fmt.Sprintf("+%d -%d blocks", added, removed)
 	}
 	return fmt.Sprintf("+%d -%d", added, removed)
 }
