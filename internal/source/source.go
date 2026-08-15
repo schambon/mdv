@@ -81,6 +81,20 @@ func read(path string, validate func(string) (string, error)) (Source, error) {
 	return Source{Path: abs, Name: filepath.Base(abs), Bytes: data}, nil
 }
 
+// FromBytes wraps content that never came from the file system — a git blob
+// has no path on disk, and the side of a comparison that is a revision may not
+// exist there at all. Path may be empty; callers that want to open the file
+// must check it.
+//
+// The size limit is enforced here rather than inherited: content built this way
+// bypasses ValidateAny, which is what stats a real file.
+func FromBytes(name, path string, data []byte) (Source, error) {
+	if len(data) > MaxSize {
+		return Source{}, fmt.Errorf("%s: content is %d bytes, limit is %d", name, len(data), MaxSize)
+	}
+	return Source{Path: path, Name: name, Bytes: data}, nil
+}
+
 // IsMarkdown reports whether a path names a Markdown file by extension. Diff
 // mode uses it to decide how to compare two files, not whether to accept them.
 func IsMarkdown(path string) bool { return hasMarkdownExtension(path) }

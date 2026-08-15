@@ -4,7 +4,9 @@
 
 The program is written in Go and imports only the standard library. `go.mod` has no third-party requirements. The interactive terminal backend is implemented only for Darwin; the non-Darwin build returns an error from terminal construction.
 
-The implementation owns file loading, Markdown parsing, semantic data, diffing, layout, styling, searching, terminal I/O, and editor execution. It does not invoke Glow or another renderer, nor `diff` or `git`.
+The implementation owns file loading, Markdown parsing, semantic data, diffing, layout, styling, searching, terminal I/O, and editor execution. It does not invoke Glow or another renderer, nor `diff`.
+
+`git` is the one exception, and only in git mode: `mdv git` runs the `git` binary to fetch file contents, never to compute a difference. Everything else works with no repository and no `git` on `PATH`.
 
 ## 2. Package structure
 
@@ -22,6 +24,7 @@ internal/link/     external-target validation and OSC 8 encoding
 internal/terminal/ Darwin raw mode, sizing, events, and screen lifecycle
 internal/difftext/ Myers line and word diff over any comparable slice
 internal/diffdoc/  aligned diff rows, intraline segments, folding
+internal/git/      repository blobs as a content source for diff mode
 ```
 
 The main data flow is:
@@ -53,6 +56,12 @@ two paths -> source.LoadAny -> difftext.Lines -> diffdoc.Build -> diffdoc.Docume
                                                               layout.DiffDocument
 ```
 
+Git mode replaces only the first stage of that: `git.Repo` fetches the two sides' bytes and `source.FromBytes` wraps them, after which the path is identical.
+
+```text
+revisions -> git.Repo.Load -> source.FromBytes -> (as above)
+```
+
 `DiffDocument` embeds a `layout.Document`, so everything downstream — search, styling, the viewport, resize, the editor key — is shared rather than reimplemented. Its extra `Rows` field maps each rendered line back to the diff row that produced it, which is what fold expansion and hunk navigation index through.
 
 ## 3. CLI and source loading
@@ -68,6 +77,8 @@ two paths -> source.LoadAny -> difftext.Lines -> diffdoc.Build -> diffdoc.Docume
 5. returns the absolute path.
 
 `ValidateAny` is the same without step 2. Diff mode uses it, since refusing to compare a `.go` file would apply a rendering constraint to a comparison; `Validate` is `ValidateAny` plus the extension check. `source.Load` and `LoadAny` validate, read the complete file with `os.ReadFile`, and return the absolute path, basename, and bytes. Splitting validation from reading lets `app.Run` reject a bad path before it demands a terminal.
+
+`source.FromBytes` wraps content that never came from the file system — a git blob has no path on disk, and a side that is a revision may not exist there at all. It enforces `MaxSize` itself, since nothing has stat'd the content, and its `Path` may be empty, which is what tells the editor key there is nothing to open.
 
 There is no source abstraction for stdin or multiple files, and no `BaseDir`: nothing resolves local links, so storing the source directory would only invite the assumption that something does.
 
@@ -287,6 +298,27 @@ Fold and hunk keys are single letters rather than vim's `z`-prefixed chords, bec
 
 Any rebuild of the rows invalidates the row indices search matches hold, so `refreshMatches` is called from resize, reload, and every fold change.
 
+### 13.5 Git mode
+
+`mdv git [REV | REV..REV] [PATH]` sets `Config.Git`, and `App.load` dispatches to `loadGit` instead of reading paths. Git is a *content* source: `internal/git` fetches each side's bytes and hands them to the same alignment, folding, word diff and side-by-side layout the two-file form uses. Parsing `git diff`'s unified output would throw all of that away, along with the ability to expand context beyond what git chose to print.
+
+Every command goes through an injected `git.Runner`, mirroring `App.runEdit`, so the tests use canned output and need neither a repository nor the binary.
+
+`git.Spec` maps the command line onto two `Side`s — a revision, the index, or the work tree — following git's own defaults, so `mdv git` compares the index with the work tree exactly as `git diff` does, and `--staged` compares `HEAD` with the index. `A..B` names two revisions; `A...B` resolves the merge base first. A revision cannot be told from a path without asking the repository, so `cmd/mdv` passes the operands through as typed and `Repo.Resolve` decides: an existing file wins, then a revision, then a path git still tracks — which is how a file deleted from the work tree can be named.
+
+`Repo.Load` fetches both sides in one call, because whether a side exists is a property of the pair: an added file is absent from the old side and a deleted one from the new, and both must come back empty rather than as an error.
+
+The hardening is not incidental:
+
+- Operands beginning with `-` are rejected and pathspecs are terminated with `--`. There is no shell, but git parses its own arguments, and a revision named `--upload-pack=…` is an option.
+- Every command carries `--no-ext-diff` and `--no-textconv`, and `GIT_OPTIONAL_LOCKS=0` with `--no-optional-locks`. A repository's `.gitattributes` can otherwise name an external diff driver or a textconv filter, and mdv would run a program it did not choose from a repository it did not write.
+- Output is captured, never inherited, and git never goes through `term.Suspend` the way the editor does. The viewer is in raw mode on the alternate screen, where a child's output cannot be repaired.
+- Content holding a NUL byte is replaced with a `Binary file, N bytes` marker. Raw bytes written to a terminal in raw mode are not recoverable.
+
+Only one file is shown. Several changed files are reported as a list to choose from rather than picked between silently.
+
+`editTarget` is empty when no side is on disk, as for `A..B`, and `v` says so instead of opening a path that does not exist. `reload` re-runs the whole of `loadGit`, so `r` picks up a commit or a stage made outside the viewer.
+
 ## 14. Implemented tests
 
 The repository's Go tests cover:
@@ -303,6 +335,7 @@ The repository's Go tests cover:
 - diff alignment, through randomised tests asserting every line of both files appears exactly once and that folding reproduces the unfolded alignment when flattened;
 - diff layout: no row exceeding the width at any width or gutter setting, the divider landing on the same column of every row, preserved indentation, expanded tabs, and the rendered-line-to-row mapping staying in step;
 - diff viewer behaviour over fakes: folding, expansion, hunk navigation, the status summary, reload of both files, and search matches surviving a fold change;
+- git mode over a fake runner: the arguments and hardening flags of each command, revision-against-path resolution, the spec each command line maps to, added, deleted and binary files, the editor key with no file on disk, refetching on reload, and clean errors for a missing repository, a missing git, an unresolvable operand, and more than one changed file;
 - application paging, status text, search interaction, editing/reload behavior, resize reflow, input-pump ownership, signal handling, CRLF frame rows, and terminal lifecycle through fakes.
 
 Tests run with `go test ./...`, and `go test -race ./...` covers the signal handler, input pump, and terminal state. There are no golden files, pseudo-terminal integration tests, CI configuration, benchmarks, or packaging scripts in the repository.

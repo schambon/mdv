@@ -11,9 +11,10 @@ The implementation is intentionally a bounded Markdown renderer, not a CommonMar
 ```text
 mdv [options] FILE
 mdv [options] diff OLD NEW
+mdv [options] git [REV | REV..REV] [PATH]
 ```
 
-`FILE` is required and must name a regular file whose extension, matched case-insensitively, is `.md` or `.markdown`. The file must be no larger than 32 MiB. Relative paths are converted to absolute paths before use. The `diff` form is described in §9; it applies the same regular-file and size checks but no extension check.
+`FILE` is required and must name a regular file whose extension, matched case-insensitively, is `.md` or `.markdown`. The file must be no larger than 32 MiB. Relative paths are converted to absolute paths before use. The `diff` form is described in §9; it applies the same regular-file and size checks but no extension check. The `git` form is described in §9.2 and names no file on disk at all.
 
 Implemented options:
 
@@ -32,7 +33,7 @@ Width must be non-negative. A positive width caps rendering only when it is narr
 
 Flags may appear on either side of a subcommand: `mdv --no-split diff a b` and `mdv diff --no-split a b` are equivalent. When the same flag is given twice, the later one wins.
 
-Both stdin and stdout must be interactive character devices. The path is validated before a terminal is required, so a bad filename reports the file problem rather than a terminal problem. On platforms other than macOS, startup fails with an unsupported-platform error.
+Both stdin and stdout must be interactive character devices. The path is validated before a terminal is required, so a bad filename reports the file problem rather than a terminal problem. Git mode has no path to validate; it reports what git says, before the screen is entered. On platforms other than macOS, startup fails with an unsupported-platform error.
 
 ## 3. Viewer
 
@@ -199,6 +200,37 @@ Unchanged blocks are drawn once across the full width, since both sides are iden
 Markdown styling survives the comparison: a changed heading keeps its heading colour and gains the added or removed background behind it.
 
 In this mode a row counts as a block, so the fold marker reads "N unchanged blocks" and the status summary reads `+N -M blocks`.
+
+### 9.2 Git mode
+
+```text
+mdv [options] git [REV | REV..REV] [PATH]
+```
+
+`git` as the first positional argument compares a file's two versions in a repository. It is diff mode with a different source of content: every diff option, key binding and behaviour in §9 applies, including the Markdown-aware comparison of §9.1, which is chosen on the file's own name.
+
+The two sides follow git's own defaults:
+
+```text
+mdv git                    the index against the working tree (git diff)
+mdv git --staged           HEAD against the index (git diff --cached)
+mdv git REV                REV against the working tree
+mdv git REV --staged       REV against the index
+mdv git A..B               A against B
+mdv git A...B              their merge base against B
+```
+
+`--cached` is an alias for `--staged`. Combining `--staged` with a revision range is a usage error.
+
+At most two operands are accepted. Whether one is a revision or a path is decided by asking the repository: an existing file is a path, then anything git resolves as a revision is a revision, then a path git still tracks is a path — so a file deleted from the working tree can still be named. Anything else is an error naming the operand. An operand beginning with `-` is refused rather than passed to git, which would read it as an option.
+
+Exactly one file is shown. When several files differ and no path was given, mdv lists them and exits rather than choosing one. When none differ, it says so. A file added on one side is compared against emptiness, and so is a deleted one.
+
+Content holding a NUL byte is not rendered: each side reads `Binary file, N bytes`.
+
+`v` opens the working-tree file when a side is one; comparing two revisions, neither side is a file on disk and `v` reports that instead. `r` asks git again, so a commit or a stage made outside the viewer is picked up.
+
+Git is run to fetch file contents, never to compute a difference. It is never given the terminal, and it is invoked with external diff drivers, textconv filters and optional locks disabled, so a repository's own configuration cannot make mdv run a program it did not choose. Errors from git — no repository, an unknown revision, no `git` on `PATH` — are reported as they are.
 
 ## 10. Terminal lifecycle
 

@@ -18,19 +18,22 @@ go test ./internal/md -run TestParseTable -v   # one test
 ## Hard constraints
 
 - **Standard library only.** `go.mod` has zero third-party requirements. No Glow, no Bubble Tea, no termbox — file loading, parsing, layout, styling, search, terminal I/O, and editor exec are all owned by this codebase.
+- **One runtime dependency: the `git` binary, only in `mdv git`.** It is a *content* source — `show` and `diff --name-status` fetch bytes, and mdv computes the difference itself. Nothing else in the program needs a repository or git on `PATH`, and every failure of it must come back as a clean error.
 - **macOS only.** `terminal_darwin.go` drives termios and `TIOCGWINSZ` through `syscall`; `terminal_other.go` returns an unsupported-platform error. Check cross-platform builds with `GOOS=linux go build ./internal/terminal/`.
 - **Bounded Markdown, deliberately.** Not CommonMark, not GFM. Anything outside the subset in `REQUIREMENTS.md` §4 renders as literal text. Resist "fixing" this by adding nesting, escapes, reference links, or a delimiter stack — that is an explicit non-goal.
 - Out of scope: stdin, file watching, syntax highlighting, inline HTML, local-link resolution, images, footnotes.
-- **Two files, only in diff mode.** `mdv FILE` still takes exactly one Markdown file. `mdv diff OLD NEW` takes two files of any type — the Markdown extension check is deliberately skipped there (`source.ValidateAny`), since refusing to diff a `.go` file would be enforcing a rendering constraint on a comparison.
+- **Two files, only in diff mode.** `mdv FILE` still takes exactly one Markdown file. `mdv diff OLD NEW` takes two files of any type — the Markdown extension check is deliberately skipped there (`source.ValidateAny`), since refusing to diff a `.go` file would be enforcing a rendering constraint on a comparison. `mdv git` names no file on disk at all: `source.FromBytes` wraps a blob, enforcing `MaxSize` itself because nothing stat'd it, and leaving `Path` empty when the side is not a working-tree file.
+- **One file in git mode, for now.** Several changed files are reported as a list to pick from, not chosen between silently. The sidebar that makes many navigable is a later phase.
 
 ## Architecture
 
 A one-way pipeline; lower layers never import higher ones:
 
 ```
-path  → source.Load    → md.Parse      → doc.Document     → layout.Render     ┐
-paths → source.LoadAny → difftext.Lines → diffdoc.Document → layout.RenderDiff ┤
-                                                                              ↓
+path  → source.Load     → md.Parse       → doc.Document     → layout.Render     ┐
+paths → source.LoadAny  → difftext.Lines → diffdoc.Document → layout.RenderDiff ┤
+revs  → git.Repo.Load   → source.FromBytes ↗                                    │
+                                                                                ↓
                               layout.Document → style/search → terminal frame
 ```
 
@@ -47,6 +50,7 @@ Diff mode is a second data path into the same viewer, not a second viewer. Both 
 - `internal/search`, `internal/editor`, `internal/terminal`, `internal/app`.
 - `internal/difftext` — Myers O(ND) diff in its linear-space divide-and-conquer form, generic over `comparable`. Emits a flat edit script of Equal/Delete/Insert runs; it never pairs a delete with an insert, because that is an alignment decision.
 - `internal/diffdoc` — the diff semantic model, parallel to `doc`. Pairs the edit script into left/right `Row`s, computes intraline word diffs, and folds distant context. `Row.Hidden` carries the collapsed rows so expanding a fold is a splice, not a re-diff.
+- `internal/git` — the repository as a content source: `Spec` maps a command line onto two `Side`s (revision, index, work tree), `Resolve` tells a revision from a path, `Load` fetches both sides of one file. Every command goes through an injected `Runner`, mirroring `App.runEdit`, so tests need no repo.
 - `internal/layout/diff.go` — diff rendering, in package `layout` rather than its own package because it reuses `run`, `clip`, `clipSpans`, `Width` and the `Span` model. A separate package would have to export all of them.
 
 ### Invariants worth preserving
@@ -59,6 +63,7 @@ Diff mode is a second data path into the same viewer, not a second viewer. Both 
 - **Rendering happens before raw mode**, and `Leave` is deferred immediately after `Enter`. Every exit path — signals, recovered panics (re-panicked as `mdv: internal panic`), editor suspend — must restore termios, the cursor, and the primary screen.
 - **One outstanding read, tracked by the viewer goroutine** (`internal/app/pump.go`). A second queued read would still be pending when the user presses `v` and would steal the editor's first keystroke.
 - **No shell, ever.** `editor.Split` lexes `$VISUAL`/`$EDITOR` itself and rejects `;|&<>`, backticks, `$`, parens, braces, CR, and LF; the argv goes straight to `exec.Command`.
+- **Git is invoked defensively.** No shell does not mean no argument injection: git reads an operand beginning with `-` as a flag, so `checkOperands` rejects those and pathspecs are terminated with `--`. `--no-ext-diff`, `--no-textconv`, `--no-optional-locks` and `GIT_OPTIONAL_LOCKS=0` are on every command, because a repository's `.gitattributes` can otherwise name a program for mdv to run. Git's output is captured and it never goes through `term.Suspend` the way the editor does — the screen is in raw mode and a child writing to it cannot be repaired. Content with a NUL byte becomes a marker rather than being written to that screen.
 - **Diff rows never lose a line.** Folding is presentation only: `diffdoc.Expand`/`ExpandAll` must reproduce exactly the alignment that building with `Context: -1` gives, and every line of both files must appear exactly once across a document's rows and their `Hidden` contents. The random round-trip tests in `internal/diffdoc` guard both.
 - **Markdown diffing compares blocks, not lines** (`internal/diffdoc/markdown.go`). The alignment key must cover everything that changes rendering — block kind/level/prefix/header, and every inline's kind, **text and target**. Keyed on inline text alone, `[docs](old)` and `[docs](new)` are identical and a changed link shows no diff at all; that is a wrong answer, not an untidy one. Source position is deliberately excluded: moving a paragraph does not change it. `TestRewrapProducesNoDiff` guards the feature's whole reason to exist, and `TestRewrapDoesChangeTheLineDiff` guards that the test still means something.
 - **In markdown diff mode, unchanged units render once at full width**; only changed units split into panes, bracketed by rules. So `TestSideBySidePanesStayAligned`'s invariant is scoped to rows that *have* a divider — see `TestMarkdownSplitRowsStayAligned`.

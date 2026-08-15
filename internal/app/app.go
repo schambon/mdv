@@ -13,6 +13,7 @@ import (
 
 	"github.com/schambon/mdv/internal/diffdoc"
 	"github.com/schambon/mdv/internal/editor"
+	"github.com/schambon/mdv/internal/git"
 	"github.com/schambon/mdv/internal/layout"
 	"github.com/schambon/mdv/internal/md"
 	"github.com/schambon/mdv/internal/search"
@@ -40,6 +41,10 @@ type Config struct {
 	// comparing two files as rendered Markdown and comparing them as text.
 	ForceRaw      bool
 	ForceMarkdown bool
+
+	// Git, when set, selects git mode: the two sides are fetched from the
+	// repository rather than read from paths given on the command line.
+	Git *GitRequest
 }
 
 // markdownDiff reports whether the two files should be compared as rendered
@@ -57,8 +62,9 @@ func (c Config) markdownDiff() bool {
 	}
 }
 
-// diffMode reports whether the viewer is comparing two files.
-func (c Config) diffMode() bool { return c.Compare != "" }
+// diffMode reports whether the viewer is comparing two files. Git mode always
+// is, before load has had a chance to name the file being compared.
+func (c Config) diffMode() bool { return c.Compare != "" || c.Git != nil }
 
 // mode is the viewer's input mode.
 type mode int
@@ -75,6 +81,7 @@ type App struct {
 	styler  style.Styler
 	env     func(string) string
 	runEdit func(argv []string) error
+	runGit  git.Runner
 
 	src         source.Source
 	rendered    layout.Document
@@ -103,15 +110,23 @@ type App struct {
 // Run opens the file and drives the viewer until the user quits.
 func Run(cfg Config) error {
 	// Check the paths before demanding a terminal, so a bad filename reports
-	// the real problem rather than complaining about the terminal.
-	if cfg.diffMode() {
+	// the real problem rather than complaining about the terminal. Git mode has
+	// no paths to check: it names revisions, and load reports what git says.
+	switch {
+	case cfg.Git != nil:
+		// Nothing on the command line names a file; load reports what git says.
+
+	case cfg.diffMode():
 		for _, path := range []string{cfg.Path, cfg.Compare} {
 			if _, err := source.ValidateAny(path); err != nil {
 				return err
 			}
 		}
-	} else if _, err := source.Validate(cfg.Path); err != nil {
-		return err
+
+	default:
+		if _, err := source.Validate(cfg.Path); err != nil {
+			return err
+		}
 	}
 	term, err := terminal.New()
 	if err != nil {
@@ -127,6 +142,7 @@ func run(cfg Config, term terminal.Terminal) error {
 		term:   term,
 		styler: style.New(cfg.Theme, cfg.Color),
 		env:    os.Getenv,
+		runGit: git.Exec,
 		active: -1,
 	}
 	a.runEdit = a.execEditor
@@ -199,8 +215,11 @@ func (a *App) loop() error {
 	}
 }
 
-// load reads the source file, or both files in diff mode.
+// load reads the source file, or both sides in diff mode.
 func (a *App) load() error {
+	if a.cfg.Git != nil {
+		return a.loadGit()
+	}
 	if !a.cfg.diffMode() {
 		src, err := source.Load(a.cfg.Path)
 		if err != nil {
@@ -370,7 +389,15 @@ func (a *App) reload() error {
 // edit suspends the viewer, runs the editor on the current source line, then
 // reloads unconditionally: the file may have changed even if the editor failed.
 func (a *App) edit() error {
-	argv, err := editor.Command(a.env, a.editTarget(), a.sourceLine())
+	target := a.editTarget()
+	if target == "" {
+		// Comparing two revisions: neither side is a file, so there is nothing
+		// to open, and inventing a path would edit the wrong thing.
+		a.message = errNoWorkTreeFile.Error()
+		return nil
+	}
+
+	argv, err := editor.Command(a.env, target, a.sourceLine())
 	if err != nil {
 		a.message = err.Error()
 		return nil
@@ -449,7 +476,8 @@ func (a *App) diffSummary() string {
 }
 
 // editTarget is the file v opens. In diff mode that is the new file, matching
-// the line number the status bar and the row mapping report.
+// the line number the status bar and the row mapping report. It is empty when
+// no side is on disk, as when git compares two revisions.
 func (a *App) editTarget() string {
 	if a.cfg.diffMode() {
 		return a.compare.Path

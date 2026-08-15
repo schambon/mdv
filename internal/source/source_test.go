@@ -128,3 +128,27 @@ func TestLoadAcceptsExactlyMaxSize(t *testing.T) {
 		t.Errorf("Load at exactly MaxSize: %v", err)
 	}
 }
+
+func TestFromBytes(t *testing.T) {
+	src, err := FromBytes("note.md@HEAD", "", []byte("# Title\n"))
+	if err != nil {
+		t.Fatalf("FromBytes: %v", err)
+	}
+	if src.Name != "note.md@HEAD" || src.Path != "" {
+		t.Errorf("got %q at %q", src.Name, src.Path)
+	}
+	if string(src.Bytes) != "# Title\n" {
+		t.Errorf("Bytes = %q", src.Bytes)
+	}
+}
+
+// Content that never came from the file system was never stat'd, so the size
+// limit has to be enforced here or it is not enforced at all.
+func TestFromBytesEnforcesTheSizeLimit(t *testing.T) {
+	if _, err := FromBytes("big", "", make([]byte, MaxSize+1)); err == nil {
+		t.Fatal("oversized content should be rejected")
+	}
+	if _, err := FromBytes("ok", "", make([]byte, MaxSize)); err != nil {
+		t.Fatalf("content at the limit should be accepted: %v", err)
+	}
+}

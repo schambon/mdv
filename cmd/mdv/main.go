@@ -26,20 +26,26 @@ const (
 
 const usage = `mdv [options] FILE
 mdv [options] diff OLD NEW
+mdv [options] git [REV | REV..REV] [PATH]
 
 An interactive Markdown viewer. FILE must be a .md or .markdown file.
 The diff form compares two files of any type side by side. Two Markdown
 files are compared as rendered documents, so reflowing a paragraph is not
 a change; --raw compares them as lines of text instead.
+The git form compares a file's two versions in a repository, defaulting to
+the index against the working tree, as git diff does.
 Press h inside the viewer for the key bindings.
 
 Options:
 `
 
-// diffCommand is the subcommand that selects diff mode. It is matched as a
-// positional argument rather than a real subcommand so the existing single-file
-// form and all of its flags keep working unchanged.
-const diffCommand = "diff"
+// Subcommands are matched as positional arguments rather than being real
+// subcommands, so the existing single-file form and all of its flags keep
+// working unchanged.
+const (
+	diffCommand = "diff"
+	gitCommand  = "git"
+)
 
 // errUsage marks a failure that should exit with the usage status.
 var errUsage = errors.New("usage")
@@ -83,6 +89,7 @@ type options struct {
 	noWordDiff  bool
 	raw         bool
 	markdown    bool
+	staged      bool
 }
 
 // flagSet builds a parser bound to these options. It is called more than once
@@ -112,13 +119,15 @@ func (o *options) flagSet(stderr io.Writer) *flag.FlagSet {
 	fs.BoolVar(&o.noWordDiff, "no-word-diff", o.noWordDiff, "diff: do not highlight changes within a line")
 	fs.BoolVar(&o.raw, "raw", o.raw, "diff: compare Markdown as lines of text, not as rendered blocks")
 	fs.BoolVar(&o.markdown, "md", o.markdown, "diff: compare as rendered Markdown whatever the file extensions")
+	fs.BoolVar(&o.staged, "staged", o.staged, "git: compare HEAD against the index instead of the working tree")
+	fs.BoolVar(&o.staged, "cached", o.staged, "git: alias for --staged")
 	return fs
 }
 
 // isSubcommand reports whether an argument selects a mode rather than naming a
 // file.
 func isSubcommand(arg string) bool {
-	return arg == diffCommand
+	return arg == diffCommand || arg == gitCommand
 }
 
 // parseArgs validates the command line. done reports that the program has
@@ -192,12 +201,23 @@ func parseArgs(args []string, stdout, stderr io.Writer) (cfg app.Config, done bo
 		ForceMarkdown: opts.markdown,
 	}
 
-	if command == diffCommand {
+	switch command {
+	case diffCommand:
 		if len(rest) != 2 {
 			fmt.Fprintf(stderr, "mdv: diff needs exactly two files\n")
 			return cfg, false, errUsage
 		}
 		cfg.Path, cfg.Compare = rest[0], rest[1]
+		return cfg, false, nil
+
+	case gitCommand:
+		// A revision cannot be told from a path without asking the repository,
+		// so the operands are passed through as typed.
+		if len(rest) > 2 {
+			fmt.Fprintf(stderr, "mdv: git takes at most a revision and a path\n")
+			return cfg, false, errUsage
+		}
+		cfg.Git = &app.GitRequest{Args: rest, Staged: opts.staged}
 		return cfg, false, nil
 	}
 
