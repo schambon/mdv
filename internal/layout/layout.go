@@ -28,6 +28,14 @@ const (
 	StyleSearch
 	StyleSearchActive
 	StyleStatus
+	// Diff-mode styles. The Word variants mark the part of a changed line
+	// that actually differs, against the whole-line Add/Remove background.
+	StyleDiffAdd
+	StyleDiffRemove
+	StyleDiffAddWord
+	StyleDiffRemoveWord
+	StyleDiffGutter
+	StyleDiffFold
 )
 
 const (
@@ -188,6 +196,13 @@ func (r *renderer) newRow(b doc.Block, first bool) RenderedLine {
 }
 
 func (r *renderer) appendSpan(line *RenderedLine, s Span) {
+	addSpan(line, s)
+}
+
+// addSpan appends a span and keeps SearchText equal to the concatenation of
+// the row's span texts. Every render path goes through here, so that invariant
+// holds no matter which model produced the row.
+func addSpan(line *RenderedLine, s Span) {
 	line.Spans = append(line.Spans, s)
 	line.SearchText += s.Text
 }

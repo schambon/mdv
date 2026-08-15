@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/schambon/mdv/internal/diffdoc"
 	"github.com/schambon/mdv/internal/editor"
 	"github.com/schambon/mdv/internal/layout"
 	"github.com/schambon/mdv/internal/md"
@@ -28,7 +29,17 @@ type Config struct {
 	Theme       style.Theme
 	LineNumbers bool
 	Color       bool
+
+	// Compare names a second file. When it is set the viewer shows the
+	// difference between Path and Compare instead of rendering Path.
+	Compare    string
+	Context    int // unchanged lines kept around a change; negative disables folding
+	SideBySide bool
+	WordDiff   bool
 }
+
+// diffMode reports whether the viewer is comparing two files.
+func (c Config) diffMode() bool { return c.Compare != "" }
 
 // mode is the viewer's input mode.
 type mode int
@@ -51,6 +62,13 @@ type App struct {
 	sourceLines int // lines in the file, for the status line
 	size        terminal.Size
 
+	// Diff mode. compare is the new file, diff the aligned rows including
+	// whatever folds the reader has expanded, and diffRows maps each rendered
+	// line back to its row in diff.
+	compare  source.Source
+	diff     diffdoc.Document
+	diffRows []int
+
 	top     int
 	mode    mode
 	message string
@@ -65,9 +83,15 @@ type App struct {
 
 // Run opens the file and drives the viewer until the user quits.
 func Run(cfg Config) error {
-	// Check the path before demanding a terminal, so a bad filename reports
+	// Check the paths before demanding a terminal, so a bad filename reports
 	// the real problem rather than complaining about the terminal.
-	if _, err := source.Validate(cfg.Path); err != nil {
+	if cfg.diffMode() {
+		for _, path := range []string{cfg.Path, cfg.Compare} {
+			if _, err := source.ValidateAny(path); err != nil {
+				return err
+			}
+		}
+	} else if _, err := source.Validate(cfg.Path); err != nil {
 		return err
 	}
 	term, err := terminal.New()
@@ -156,14 +180,39 @@ func (a *App) loop() error {
 	}
 }
 
-// load reads the source file and reparses it.
+// load reads the source file, or both files in diff mode.
 func (a *App) load() error {
-	src, err := source.Load(a.cfg.Path)
+	if !a.cfg.diffMode() {
+		src, err := source.Load(a.cfg.Path)
+		if err != nil {
+			return err
+		}
+		a.src = src
+		return nil
+	}
+
+	old, err := source.LoadAny(a.cfg.Path)
 	if err != nil {
 		return err
 	}
-	a.src = src
+	updated, err := source.LoadAny(a.cfg.Compare)
+	if err != nil {
+		return err
+	}
+	a.src, a.compare = old, updated
+	a.buildDiff()
 	return nil
+}
+
+// buildDiff aligns the two files. It is deliberately separate from render:
+// which folds are open is part of the row list, so a resize must lay the diff
+// out again without discarding what the reader has expanded.
+func (a *App) buildDiff() {
+	a.diff = diffdoc.Build(
+		diffdoc.SplitLines(a.src.Bytes),
+		diffdoc.SplitLines(a.compare.Bytes),
+		diffdoc.Options{Context: a.cfg.Context, WordDiff: a.cfg.WordDiff},
+	)
 }
 
 // currentSize reads the terminal size, falling back when it cannot be read.
@@ -186,6 +235,16 @@ func (a *App) renderWidth() int {
 
 // render lays the document out at the current width.
 func (a *App) render() {
+	if a.cfg.diffMode() {
+		rendered := layout.RenderDiff(a.diff, layout.DiffOptions{
+			Width:       a.renderWidth(),
+			LineNumbers: a.cfg.LineNumbers,
+			SideBySide:  a.cfg.SideBySide,
+		})
+		a.rendered, a.diffRows = rendered.Document, rendered.Rows
+		return
+	}
+
 	parsed := md.Parse(a.src.Bytes)
 	a.sourceLines = len(parsed.Lines)
 	a.rendered = layout.Render(parsed, layout.Options{
@@ -235,14 +294,38 @@ func (a *App) sourceLine() int {
 // resize re-renders at the new width and holds the reader's place. The
 // document must be reflowed, or the text would keep its old wrapping.
 func (a *App) resize() {
+	a.reflow(func() { a.size = terminal.Normalize(a.currentSize()) })
+}
+
+// reflow applies a change that invalidates the current layout, lays the
+// document out again, and holds the reader's place against the source line
+// they were looking at. Anything that alters how rows are built — a resize, a
+// fold, toggling the gutter — has to go through here: the rows are rebuilt, so
+// a viewport index means nothing afterwards and search matches point at rows
+// that no longer exist.
+func (a *App) reflow(change func()) {
 	line := a.sourceLine()
-	a.size = terminal.Normalize(a.currentSize())
+	change()
 	a.render()
 	a.top = a.clamp(layout.Nearest(a.rendered, line))
-	if a.query != "" {
-		a.matches = search.Find(a.rendered, a.query)
-		a.active = -1
+	a.refreshMatches()
+}
+
+// refreshMatches recomputes search matches after the rows they refer to have
+// been rebuilt.
+func (a *App) refreshMatches() {
+	if a.query == "" {
+		return
 	}
+	a.matches = search.Find(a.rendered, a.query)
+	a.active = -1
+}
+
+// toggleLineNumbers shows or hides the line-number gutter. The gutter takes
+// its width out of the content, so the document has to be laid out again
+// rather than merely redrawn.
+func (a *App) toggleLineNumbers() {
+	a.reflow(func() { a.cfg.LineNumbers = !a.cfg.LineNumbers })
 }
 
 // reload re-reads the file from disk, keeping the viewport near the same
@@ -255,17 +338,14 @@ func (a *App) reload() error {
 	a.size = terminal.Normalize(a.currentSize())
 	a.render()
 	a.top = a.clamp(layout.Nearest(a.rendered, line))
-	if a.query != "" {
-		a.matches = search.Find(a.rendered, a.query)
-		a.active = -1
-	}
+	a.refreshMatches()
 	return nil
 }
 
 // edit suspends the viewer, runs the editor on the current source line, then
 // reloads unconditionally: the file may have changed even if the editor failed.
 func (a *App) edit() error {
-	argv, err := editor.Command(a.env, a.src.Path, a.sourceLine())
+	argv, err := editor.Command(a.env, a.editTarget(), a.sourceLine())
 	if err != nil {
 		a.message = err.Error()
 		return nil
@@ -297,12 +377,54 @@ func (a *App) statusText() string {
 	if a.maxTop() > 0 {
 		percent = a.top * 100 / a.maxTop()
 	}
+
+	if a.cfg.diffMode() {
+		return fmt.Sprintf("%s → %s  %d%%  %s",
+			a.src.Name, a.compare.Name, percent, a.diffSummary())
+	}
+
 	total := a.sourceLines
 	if total < 1 {
 		total = 1
 	}
 	return fmt.Sprintf("%s  %d%%  source line %d/%d",
 		a.src.Name, percent, a.sourceLine(), total)
+}
+
+// diffSummary counts the changed lines, so the reader knows the size of what
+// they are paging through without reaching the end.
+func (a *App) diffSummary() string {
+	added, removed := 0, 0
+	var count func(rows []diffdoc.Row)
+	count = func(rows []diffdoc.Row) {
+		for _, row := range rows {
+			switch row.Kind {
+			case diffdoc.RowFolded:
+				count(row.Hidden)
+			case diffdoc.RowAdded:
+				added++
+			case diffdoc.RowRemoved:
+				removed++
+			case diffdoc.RowChanged:
+				added, removed = added+1, removed+1
+			}
+		}
+	}
+	count(a.diff.Rows)
+
+	if added == 0 && removed == 0 {
+		return "identical"
+	}
+	return fmt.Sprintf("+%d -%d", added, removed)
+}
+
+// editTarget is the file v opens. In diff mode that is the new file, matching
+// the line number the status bar and the row mapping report.
+func (a *App) editTarget() string {
+	if a.cfg.diffMode() {
+		return a.compare.Path
+	}
+	return a.src.Path
 }
 
 // status is what the last row shows: a message, the search prompt, or the

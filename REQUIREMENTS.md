@@ -2,28 +2,31 @@
 
 ## 1. Purpose and scope
 
-`mdv` is an interactive, standard-library-only Markdown viewer for macOS terminals. It displays one local Markdown file in an alternate-screen pager, supports literal search, emits OSC 8 hyperlinks for safe external URLs, and can open the source file in an editor.
+`mdv` is an interactive, standard-library-only Markdown viewer for macOS terminals. It displays one local Markdown file in an alternate-screen pager, supports literal search, emits OSC 8 hyperlinks for safe external URLs, and can open the source file in an editor. It also compares two files side by side in the same pager (§9).
 
-The implementation is intentionally a bounded Markdown renderer, not a CommonMark or GitHub Flavored Markdown implementation. HTML, standard input, multiple files, file watching, local-link resolution, syntax highlighting, and non-macOS terminals are not supported.
+The implementation is intentionally a bounded Markdown renderer, not a CommonMark or GitHub Flavored Markdown implementation. HTML, standard input, file watching, local-link resolution, syntax highlighting, and non-macOS terminals are not supported. More than two files at once is not supported.
 
 ## 2. Command line
 
 ```text
 mdv [options] FILE
+mdv [options] diff OLD NEW
 ```
 
-`FILE` is required and must name a regular file whose extension, matched case-insensitively, is `.md` or `.markdown`. The file must be no larger than 32 MiB. Relative paths are converted to absolute paths before use.
+`FILE` is required and must name a regular file whose extension, matched case-insensitively, is `.md` or `.markdown`. The file must be no larger than 32 MiB. Relative paths are converted to absolute paths before use. The `diff` form is described in §9; it applies the same regular-file and size checks but no extension check.
 
 Implemented options:
 
 ```text
 -w, --width N          Maximum rendering width; 0 uses terminal width
 -s, --style STYLE      auto, dark, or light
--l, --line-numbers     Show source line numbers
+-l, --line-numbers     Show source line numbers (toggled in the viewer with l)
     --no-color         Disable SGR styling
 -V, --version          Print the version and exit
 -h                     Print flag help and exit
 ```
+
+Diff-mode options are listed in §9. They parse in both forms but have no effect on the single-file form.
 
 Width must be non-negative. A positive width caps rendering only when it is narrower than the terminal. Invalid arguments return exit status 2; startup or runtime errors return 1; normal completion returns 0.
 
@@ -31,7 +34,7 @@ Both stdin and stdout must be interactive character devices. The path is validat
 
 ## 3. Viewer
 
-The viewer enters raw mode, switches to the alternate screen, hides the cursor, reserves the last terminal row for status, and redraws the complete frame after each event. Terminal resize events update the viewport dimensions, reflow the document at the new width, and restore the viewport to the rendered row nearest the source line that was showing. Terminal widths below 10 or failed size reads fall back to 80 columns; heights below 2 fall back to 24 rows.
+The viewer enters raw mode, switches to the alternate screen, hides the cursor, reserves the last terminal row for status, and redraws the complete frame after each event. Toggling the gutter with `l` reflows the document, since the gutter takes its width out of the content; the viewport is restored to the rendered row nearest the source line that was showing, as on a resize. Terminal resize events update the viewport dimensions, reflow the document at the new width, and restore the viewport to the rendered row nearest the source line that was showing. Terminal widths below 10 or failed size reads fall back to 80 columns; heights below 2 fall back to 24 rows.
 
 The normal status text is:
 
@@ -55,6 +58,7 @@ Implemented keys:
 | `G`, End | Go to the last page |
 | `/`, `?` | Enter forward or backward search |
 | `n`, `N` | Repeat the last search in the same or opposite direction |
+| `l` | Show or hide the line-number gutter |
 | `v` | Edit the source at the current mapped line |
 | `r`, `Ctrl-R` | Reload the source |
 | `h` | Show a one-line key summary |
@@ -128,7 +132,59 @@ Editor arguments are:
 
 The viewer restores the terminal, runs the editor synchronously with the controlling terminal attached, then re-enters the viewer and reloads the original file unconditionally. Reload revalidates the extension, regular-file status, and size limit. The viewport is restored to the rendered row nearest the saved source line. Reload errors appear as transient messages.
 
-## 9. Terminal lifecycle
+## 9. Diff mode
+
+```text
+mdv [options] diff OLD NEW
+```
+
+`diff` as the first positional argument compares two files instead of rendering one. Both files may be of any type: the `.md`/`.markdown` requirement is not applied, though the regular-file and 32 MiB limits still are. `diff` given without exactly two further paths is a usage error, which also means a file named literally `diff` cannot be opened by the single-file form; such a file has no Markdown extension and would be refused anyway.
+
+Additional options:
+
+```text
+-U, --context N        unchanged lines kept around a change (default 3)
+    --no-fold          show all unchanged lines instead of folding them
+    --no-split         use one column instead of two panes
+    --no-word-diff     do not highlight changes within a line
+```
+
+Context must not be negative. `-w`, `-s`, `-l`, and `--no-color` keep their meanings; `-l` shows both files' line numbers, each in its own gutter sized to the widest number the diff contains.
+
+Differences are computed line by line. A deletion immediately followed by an insertion is treated as a rewrite and the two runs are paired opposite each other, leftover lines on the longer side trailing as pure removals or additions. Within a paired line, a word-level difference is highlighted, unless less than a quarter of the two lines is common text, in which case the whole line is marked changed rather than scattering fragments across it.
+
+Runs of unchanged lines further than the context window from any change collapse into a single row naming how many lines are hidden. Runs shorter than three lines are left visible, since folding them saves nothing. Nothing is ever hidden by folding that cannot be recovered: expanding restores exactly the alignment that `--no-fold` would have produced.
+
+Side-by-side is the default and is used whenever each pane can have at least 24 columns; below that the view falls back to one column regardless of `--no-split`. In two panes each side wraps independently and a row occupies as many physical rows as its taller side, so the panes stay in step. In one column a rewritten line becomes two rows, the old line then the new. Lines are broken at the pane edge rather than at word boundaries, and whitespace is never dropped: indentation is meaningful in a diff. Tabs are expanded to four-column stops.
+
+Removals are marked `-` and additions `+` in a two-column marker, so the view stays readable under `--no-color`.
+
+The status line is:
+
+```text
+OLD → NEW  PERCENT%  +ADDED -REMOVED
+```
+
+`identical` replaces the counts when the files do not differ. A rewritten line counts as both an addition and a removal.
+
+Keys added in diff mode:
+
+| Key | Action |
+|---|---|
+| `]`, `[` | Move to the next or previous hunk |
+| `x` | Expand the first folded run at or below the top of the view |
+| `X` | Expand every fold |
+| `z` | Collapse unchanged context again |
+
+`l` also works here, toggling both panes' gutters at once.
+
+A run of adjacent changed rows is one hunk. Hunk navigation does not wrap; it reports when there is nothing further in that direction. Expanding a fold below the top of the view leaves the view where it is. `h` shows the diff key summary instead of the viewer's.
+
+`v` opens the new file, at the line the row maps to; a row that exists only in the old file maps to its old line number. `r` re-reads both files. Search, paging, resize, and reflow behave as in the viewer, and search matches are recomputed whenever folding or a resize rebuilds the rows.
+
+Markdown is not rendered in diff mode: two `.md` files are compared as text. Comparing rendered Markdown is not implemented.
+
+## 10. Terminal lifecycle
 
 The Darwin backend saves and restores termios, disables echo, canonical mode, signals, extended processing, CR translation, software flow control, and output post-processing, and makes enter/leave idempotent. Escape-sequence decoding supports arrows, Page Up/Down, Home, and End. A 35 ms readiness check distinguishes a bare Escape key.
 

@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/schambon/mdv/internal/app"
+	"github.com/schambon/mdv/internal/diffdoc"
 	"github.com/schambon/mdv/internal/style"
 )
 
@@ -24,12 +25,19 @@ const (
 )
 
 const usage = `mdv [options] FILE
+mdv [options] diff OLD NEW
 
 An interactive Markdown viewer. FILE must be a .md or .markdown file.
+The diff form compares two files of any type side by side.
 Press h inside the viewer for the key bindings.
 
 Options:
 `
+
+// diffCommand is the subcommand that selects diff mode. It is matched as a
+// positional argument rather than a real subcommand so the existing single-file
+// form and all of its flags keep working unchanged.
+const diffCommand = "diff"
 
 // errUsage marks a failure that should exit with the usage status.
 var errUsage = errors.New("usage")
@@ -75,6 +83,10 @@ func parseArgs(args []string, stdout, stderr io.Writer) (cfg app.Config, done bo
 		lineNumbers bool
 		noColor     bool
 		showVersion bool
+		context     int
+		noFold      bool
+		noSplit     bool
+		noWordDiff  bool
 	)
 	fs.IntVar(&width, "w", 0, "maximum rendering `width`; 0 uses the terminal width")
 	fs.IntVar(&width, "width", 0, "maximum rendering `width`; 0 uses the terminal width")
@@ -85,6 +97,11 @@ func parseArgs(args []string, stdout, stderr io.Writer) (cfg app.Config, done bo
 	fs.BoolVar(&noColor, "no-color", false, "disable colour output")
 	fs.BoolVar(&showVersion, "V", false, "print the version and exit")
 	fs.BoolVar(&showVersion, "version", false, "print the version and exit")
+	fs.IntVar(&context, "U", diffdoc.DefaultContext, "diff: unchanged `lines` kept around a change")
+	fs.IntVar(&context, "context", diffdoc.DefaultContext, "diff: unchanged `lines` kept around a change")
+	fs.BoolVar(&noFold, "no-fold", false, "diff: show all unchanged lines instead of folding them")
+	fs.BoolVar(&noSplit, "no-split", false, "diff: use one column instead of two panes")
+	fs.BoolVar(&noWordDiff, "no-word-diff", false, "diff: do not highlight changes within a line")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, false, errUsage // flag has already reported the problem
@@ -106,7 +123,37 @@ func parseArgs(args []string, stdout, stderr io.Writer) (cfg app.Config, done bo
 		return cfg, false, errUsage
 	}
 
+	if context < 0 {
+		fmt.Fprintf(stderr, "mdv: context must not be negative\n")
+		return cfg, false, errUsage
+	}
+	// Folding is switched off internally by a negative context, but the flag
+	// is the honest way to ask for it.
+	if noFold {
+		context = -1
+	}
+
+	cfg = app.Config{
+		Width:       width,
+		Theme:       resolved,
+		LineNumbers: lineNumbers,
+		Color:       !noColor,
+		Context:     context,
+		SideBySide:  !noSplit,
+		WordDiff:    !noWordDiff,
+	}
+
 	rest := fs.Args()
+	if len(rest) > 0 && rest[0] == diffCommand {
+		paths := rest[1:]
+		if len(paths) != 2 {
+			fmt.Fprintf(stderr, "mdv: diff needs exactly two files\n")
+			return cfg, false, errUsage
+		}
+		cfg.Path, cfg.Compare = paths[0], paths[1]
+		return cfg, false, nil
+	}
+
 	switch len(rest) {
 	case 1:
 	case 0:
@@ -118,13 +165,8 @@ func parseArgs(args []string, stdout, stderr io.Writer) (cfg app.Config, done bo
 		return cfg, false, errUsage
 	}
 
-	return app.Config{
-		Path:        rest[0],
-		Width:       width,
-		Theme:       resolved,
-		LineNumbers: lineNumbers,
-		Color:       !noColor,
-	}, false, nil
+	cfg.Path = rest[0]
+	return cfg, false, nil
 }
 
 func parseTheme(name string) (style.Theme, bool) {

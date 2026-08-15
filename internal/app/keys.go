@@ -14,7 +14,17 @@ const (
 	ctrlR = 0x12
 )
 
-const keyHelp = "j/k move  space/b page  g/G ends  / ? search  n/N next  v edit  r reload  q quit"
+const keyHelp = "j/k move  space/b page  g/G ends  / ? search  n/N next  l numbers  v edit  r reload  q quit"
+
+const diffKeyHelp = "j/k move  space/b page  [ ] hunk  x/X expand  z collapse  l numbers  / search  v edit  q quit"
+
+// help is the key summary for the current mode.
+func (a *App) help() string {
+	if a.cfg.diffMode() {
+		return diffKeyHelp
+	}
+	return keyHelp
+}
 
 // handle dispatches one event and reports whether the viewer should quit.
 func (a *App) handle(ev terminal.Event) (quit bool, err error) {
@@ -49,6 +59,12 @@ func (a *App) handleNormalKey(ev terminal.Event) (bool, error) {
 }
 
 func (a *App) handleRune(r rune) (bool, error) {
+	// Diff bindings are checked first so they can claim keys the base viewer
+	// does not use. They decline everything when not comparing two files.
+	if a.handleDiffRune(r) {
+		return false, nil
+	}
+
 	switch r {
 	case 'q':
 		return true, nil
@@ -65,7 +81,9 @@ func (a *App) handleRune(r rune) (bool, error) {
 	case 'G':
 		a.top = a.maxTop()
 	case 'h':
-		a.message = keyHelp
+		a.message = a.help()
+	case 'l':
+		a.toggleLineNumbers()
 	case 'r', ctrlR:
 		if err := a.reload(); err != nil {
 			a.message = err.Error()

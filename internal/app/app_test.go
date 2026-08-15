@@ -392,3 +392,86 @@ func TestConfigColorEnablesSGR(t *testing.T) {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+func TestToggleLineNumbers(t *testing.T) {
+	a := newApp(t, numberedLines(40), newFake())
+
+	if a.cfg.LineNumbers {
+		t.Fatal("line numbers should start off")
+	}
+	widthWithout := renderedWidth(a)
+
+	a.handle(key('l'))
+	if !a.cfg.LineNumbers {
+		t.Fatal("l did not turn line numbers on")
+	}
+	if got := renderedWidth(a); got <= widthWithout {
+		t.Errorf("gutter did not widen the rows: %d then %d", widthWithout, got)
+	}
+	if !strings.Contains(a.rendered.Lines[0].SearchText, "1") {
+		t.Errorf("first row should carry a line number: %q", a.rendered.Lines[0].SearchText)
+	}
+
+	a.handle(key('l'))
+	if a.cfg.LineNumbers {
+		t.Fatal("l did not turn line numbers back off")
+	}
+	if got := renderedWidth(a); got != widthWithout {
+		t.Errorf("width after toggling back = %d, want %d", got, widthWithout)
+	}
+}
+
+// renderedWidth is the widest row in the document, which grows by the gutter.
+func renderedWidth(a *App) int {
+	widest := 0
+	for _, line := range a.rendered.Lines {
+		cells := 0
+		for _, s := range line.Spans {
+			cells += s.Cells
+		}
+		if cells > widest {
+			widest = cells
+		}
+	}
+	return widest
+}
+
+// The gutter takes width out of the content, so the document reflows. The
+// reader must not lose their place.
+func TestToggleLineNumbersKeepsPosition(t *testing.T) {
+	a := newApp(t, numberedLines(60), newFake())
+
+	a.top = 30
+	line := a.sourceLine()
+
+	a.handle(key('l'))
+	if got := a.sourceLine(); got != line {
+		t.Errorf("source line after toggling = %d, want %d", got, line)
+	}
+}
+
+// Rows are rebuilt by the toggle, so matches pointing at the old ones must be
+// recomputed rather than left dangling.
+func TestToggleLineNumbersRefreshesMatches(t *testing.T) {
+	a := newApp(t, numberedLines(40), newFake())
+
+	a.handle(key('/'))
+	for _, r := range "line3" {
+		a.handle(key(r))
+	}
+	a.handle(press(terminal.KeyEnter))
+	if len(a.matches) == 0 {
+		t.Fatal("expected matches before toggling")
+	}
+
+	a.handle(key('l'))
+
+	if len(a.matches) == 0 {
+		t.Fatal("matches were lost by the toggle")
+	}
+	for _, m := range a.matches {
+		if m.Line >= len(a.rendered.Lines) {
+			t.Fatalf("match points at line %d, beyond the %d rendered", m.Line, len(a.rendered.Lines))
+		}
+	}
+}

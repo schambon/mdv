@@ -4,7 +4,7 @@
 
 The program is written in Go and imports only the standard library. `go.mod` has no third-party requirements. The interactive terminal backend is implemented only for Darwin; the non-Darwin build returns an error from terminal construction.
 
-The implementation owns file loading, Markdown parsing, semantic data, layout, styling, searching, terminal I/O, and editor execution. It does not invoke Glow or another renderer.
+The implementation owns file loading, Markdown parsing, semantic data, diffing, layout, styling, searching, terminal I/O, and editor execution. It does not invoke Glow or another renderer, nor `diff` or `git`.
 
 ## 2. Package structure
 
@@ -20,6 +20,8 @@ internal/search/   literal matching and directional selection
 internal/editor/   safe command splitting and editor-specific arguments
 internal/link/     external-target validation and OSC 8 encoding
 internal/terminal/ Darwin raw mode, sizing, events, and screen lifecycle
+internal/difftext/ Myers line and word diff over any comparable slice
+internal/diffdoc/  aligned diff rows, intraline segments, folding
 ```
 
 The main data flow is:
@@ -39,6 +41,20 @@ path -> source.Load -> md.Parse -> doc.Document
                             terminal frame
 ```
 
+Diff mode replaces the first two stages and rejoins at `layout.Document`:
+
+```text
+two paths -> source.LoadAny -> difftext.Lines -> diffdoc.Build -> diffdoc.Document
+                                                                        |
+                                                                        v
+                                                              layout.RenderDiff
+                                                                        |
+                                                                        v
+                                                              layout.DiffDocument
+```
+
+`DiffDocument` embeds a `layout.Document`, so everything downstream — search, styling, the viewport, resize, the editor key — is shared rather than reimplemented. Its extra `Rows` field maps each rendered line back to the diff row that produced it, which is what fold expansion and hunk navigation index through.
+
 ## 3. CLI and source loading
 
 `cmd/mdv` uses `flag.FlagSet` with `ContinueOnError`. It accepts exactly one positional path and the flags documented in `REQUIREMENTS.md`. Style validation is limited to `auto`, `dark`, and `light`; width must be non-negative.
@@ -51,7 +67,7 @@ path -> source.Load -> md.Parse -> doc.Document
 4. rejects sizes above `32 << 20` bytes; and
 5. returns the absolute path.
 
-`source.Load` validates, reads the complete file with `os.ReadFile`, and returns the absolute path, basename, and bytes. Splitting the two lets `app.Run` reject a bad path before it demands a terminal.
+`ValidateAny` is the same without step 2. Diff mode uses it, since refusing to compare a `.go` file would apply a rendering constraint to a comparison; `Validate` is `ValidateAny` plus the extension check. `source.Load` and `LoadAny` validate, read the complete file with `os.ReadFile`, and return the absolute path, basename, and bytes. Splitting validation from reading lets `app.Run` reject a bad path before it demands a terminal.
 
 There is no source abstraction for stdin or multiple files, and no `BaseDir`: nothing resolves local links, so storing the source directory would only invite the assumption that something does.
 
@@ -193,7 +209,9 @@ The usable page height is terminal height minus one status row. Viewport movemen
 
 Reload calls `source.Load`, reads the current terminal size, selects terminal width or a narrower configured width, reparses and rerenders, and positions the viewport at `layout.Nearest`. `Nearest` minimizes absolute distance between requested and rendered source start lines and selects the earliest row on ties.
 
-Resize takes the same path: `SIGWINCH` invokes `resize`, which records the source line on screen, updates the stored dimensions, calls `layout.Render` at the new width, and restores the viewport with `Nearest`. Text therefore reflows to the new width while the reader keeps their place. Both paths recompute search matches, since the rows they refer to have been rebuilt.
+Resize takes the same path through the shared `reflow` helper: it records the source line on screen, applies the change, calls `render`, and restores the viewport with `Nearest`. Text therefore reflows to the new width while the reader keeps their place. Anything that invalidates the layout goes through `reflow` — `SIGWINCH`, the `l` gutter toggle, and diff folding — and every path recomputes search matches through `refreshMatches`, since the rows the matches refer to have been rebuilt.
+
+`l` toggles `Config.LineNumbers` at runtime. The gutter takes its width out of the content rather than overlaying it, so the toggle is a relayout and not merely a redraw; in diff mode it re-lays out the existing rows without rebuilding the diff, leaving expanded folds open.
 
 ## 10. Terminal backend
 
@@ -219,7 +237,55 @@ Editing suspends the terminal, connects the child to process stdin/stdout/stderr
 
 Initial load and render happen before raw mode. Terminal entry failures are returned directly. After entry, `Leave` is deferred. Reload and editor failures are recoverable status messages; frame writes and terminal-read failures terminate the application. The entire file and rendered document are held in memory. There is no render cache, filesystem watcher, background reload, or configurable size limit.
 
-## 13. Implemented tests
+## 13. Diff mode
+
+### 13.1 Algorithm
+
+`difftext` implements Myers' O(ND) algorithm in the linear-space divide-and-conquer form of section 4b of the paper. The greedy form recording a full edit graph would be shorter, but costs O(D^2) memory, which a largely rewritten file reaches easily. `diffRange` trims the common prefix and suffix before any real work, since shared context is the common case and Myers' cost grows with the number of differences rather than the size of the input. `diffMiddle` then splits at a middle snake and recurses.
+
+Because prefix and suffix are trimmed first, a region with content on both sides needs at least two edits, so the middle snake always divides it into two strictly smaller problems and the recursion terminates. `middleSnake` returns a bool for the case where the forward and reverse searches fail to meet; that cannot happen, but returning an empty snake at the origin instead would spin the recursion forever, so the caller degrades to rewriting the whole region.
+
+The core is generic over `comparable`. `Lines` diffs `[]string`; `Words` tokenizes two strings and diffs the tokens. Tokens are runs of whitespace, runs of letters/digits/underscore, and every other rune on its own — punctuation splits individually so a changed argument does not swallow the parentheses around it.
+
+The edit script is a flat sequence of Equal/Delete/Insert runs, merged so no two adjacent edits share an operation. Deletes and inserts are deliberately *not* paired into a "replace": pairing depends on how the result will be drawn, so it belongs to the caller.
+
+### 13.2 Alignment and folding
+
+`diffdoc.align` walks the edit script and pairs a delete run with an adjacent insert run — in either order, since which one the algorithm emits first depends on the path it took through the edit graph and the reader should not be able to tell. Pairs become `RowChanged`, and the longer side's leftovers trail as `RowRemoved` or `RowAdded`.
+
+Intraline segments are computed per changed row and then discarded when the two lines share less than `similarityFloor` (0.25) of their text: below that the lines have little to do with each other and word highlighting scatters fragments instead of showing a change. A row with nil `Words` is highlighted whole.
+
+`fold` marks every row within `Context` of a change as visible, then collapses each maximal run of remaining equal rows into one `RowFolded` carrying them in `Hidden`. Runs shorter than `minFold` (3) are left alone, since folding them saves no space. Keeping the hidden rows inside the fold makes `Expand` a splice rather than a re-diff, and makes it verifiable that folding is presentation only: flattening a folded document reproduces the unfolded alignment exactly.
+
+### 13.3 Diff layout
+
+Diff rendering lives in `internal/layout/diff.go`, inside package `layout`, because it is the same job as Markdown layout and reuses `run`, `clip`, `clipSpans`, `Width`, `decodeRune` and the `Span` model. A separate package would have to export all of them.
+
+`packRuns` replaces `wrapRuns` for diff content. It breaks runs at the pane edge rather than at word boundaries and never drops whitespace: leading indentation is meaningful in a diff, and two panes stay aligned only if every cell of the original line is accounted for. `expandTabs` converts tabs against a running column, because a terminal advances a tab to its own stop regardless of which column a pane begins at, which would tear the right-hand pane loose.
+
+A side-by-side row draws `[gutter][marker][content] │ [gutter][marker][content]`. Each side wraps independently and the row occupies as many physical rows as the taller side, with the shorter side padded — the same shape as a table row (§6.1). Only the first physical row carries a line number and marker; repeating them on a continuation would read as a second change. Side-by-side is refused when a pane would fall below `minPaneCells` (24), because one column is more readable than two cramped ones.
+
+The unified form draws `[old gutter][new gutter][marker][content]`, and a changed row becomes two physical rows. Added and removed rows are padded out to the full width so they read as a band rather than a ragged stripe.
+
+The line-number gutter is sized to the widest number the document actually contains rather than a fixed width, capped at `maxGutterDigits`: in a split pane every wasted column comes off the content.
+
+Diff colours are backgrounds rather than foregrounds, since the line is the unit of change; the `Word` variants are a step brighter so the differing part stands out from the line holding it. The `-`/`+` marker duplicates what colour conveys deliberately, so `--no-color` stays readable.
+
+`rowSource` maps a row to a source line, preferring the new side: the reader is normally looking at what the file became, and that is the line `v` should open. A row present only in the old file maps to its old line number.
+
+### 13.4 Viewer integration
+
+`Config.Compare` selects diff mode. `App.buildDiff` is kept separate from `App.render` because which folds are open is part of the row list: a resize must lay the diff out again without discarding what the reader has expanded. `load` and `reload` rebuild the diff; resize and fold changes only re-render.
+
+Fold and hunk keys are single letters rather than vim's `z`-prefixed chords, because the event loop dispatches one keypress at a time and a pending-prefix state machine is a poor trade for two keystrokes of familiarity. `handleDiffRune` is consulted before the base bindings and declines every key when not in diff mode.
+
+`x` expands the first fold at or below the top of the viewport — the same row the status line and the editor key already act on. Nothing above the viewport moves, so the view needs no repositioning; `X` and `z`, which do move rows above the top, go through `reflow`, which holds position with `layout.Nearest` the way resize does. `z` re-folds by rebuilding rather than trying to reverse individual expansions.
+
+`hunkStarts` treats a run of adjacent changed rows as one hunk, so `[`/`]` do not stop on every line of a rewritten block. Comparing consecutive rendered lines rather than rows also skips wrapped continuations, which share a row with the line above.
+
+Any rebuild of the rows invalidates the row indices search matches hold, so `refreshMatches` is called from resize, reload, and every fold change.
+
+## 14. Implemented tests
 
 The repository's Go tests cover:
 
@@ -230,7 +296,11 @@ The repository's Go tests cover:
 - link validation and OSC 8 output;
 - theme/no-colour behavior;
 - terminal event decoding, escape-sequence handling, and size normalization;
-- command-line parsing, validation, and exit codes;
+- command-line parsing, validation, and exit codes, including the diff form and its flags;
+- the diff algorithm, through randomised round-trip tests asserting the edit script rebuilds the second input, adjacent edits never share an operation, and the Myers paper's worked example costs its known 5 edits;
+- diff alignment, through randomised tests asserting every line of both files appears exactly once and that folding reproduces the unfolded alignment when flattened;
+- diff layout: no row exceeding the width at any width or gutter setting, the divider landing on the same column of every row, preserved indentation, expanded tabs, and the rendered-line-to-row mapping staying in step;
+- diff viewer behaviour over fakes: folding, expansion, hunk navigation, the status summary, reload of both files, and search matches surviving a fold change;
 - application paging, status text, search interaction, editing/reload behavior, resize reflow, input-pump ownership, signal handling, CRLF frame rows, and terminal lifecycle through fakes.
 
 Tests run with `go test ./...`, and `go test -race ./...` covers the signal handler, input pump, and terminal state. There are no golden files, pseudo-terminal integration tests, CI configuration, benchmarks, or packaging scripts in the repository.

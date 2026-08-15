@@ -41,6 +41,17 @@ var darkPalette = palette{
 	layout.StyleSearch:       "30;43",  // black on yellow
 	layout.StyleSearchActive: "30;103", // black on bright yellow
 	layout.StyleStatus:       "7",      // reverse video
+
+	// Diff colours are backgrounds, not foregrounds: the whole line is the
+	// unit of change, and a background survives the syntax colouring a line
+	// may carry. The Word variants are a step brighter so the part that
+	// actually differs stands out from the line holding it.
+	layout.StyleDiffAdd:        "48;5;22",
+	layout.StyleDiffRemove:     "48;5;52",
+	layout.StyleDiffAddWord:    "48;5;28",
+	layout.StyleDiffRemoveWord: "48;5;88",
+	layout.StyleDiffGutter:     "38;5;240",
+	layout.StyleDiffFold:       "38;5;240",
 }
 
 // lightPalette targets a light background: darker foregrounds so text stays
@@ -59,6 +70,14 @@ var lightPalette = palette{
 	layout.StyleSearch:       "30;43",
 	layout.StyleSearchActive: "30;103",
 	layout.StyleStatus:       "7",
+
+	// Pale washes, so dark text stays legible on top of them.
+	layout.StyleDiffAdd:        "48;5;194",
+	layout.StyleDiffRemove:     "48;5;224",
+	layout.StyleDiffAddWord:    "48;5;157",
+	layout.StyleDiffRemoveWord: "48;5;217",
+	layout.StyleDiffGutter:     "38;5;247",
+	layout.StyleDiffFold:       "38;5;250",
 }
 
 // Styler renders spans. The zero value is not usable; call New.
