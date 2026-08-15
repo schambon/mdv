@@ -153,6 +153,11 @@ func (r *diffRenderer) stackedUnit(row diffdoc.Row, source doc.SourceRange) {
 // unitLines renders one side's blocks and washes them with that side's diff
 // colour. The wash is a background, so the Markdown styling underneath — a
 // heading's colour, a link's underline — survives it.
+//
+// A span the diff marked gets the brighter emphasis background instead, which
+// is where a word-level change becomes visible. Everything else about the mark
+// — where the boundaries fall, which side it belongs to — was decided in
+// diffdoc; here it is one bit selecting one of two backgrounds.
 func (r *diffRenderer) unitLines(s side, content int) []RenderedLine {
 	if !s.line.Present() {
 		return nil
@@ -161,9 +166,14 @@ func (r *diffRenderer) unitLines(s side, content int) []RenderedLine {
 	lines := renderBlocks(s.line.Blocks, content)
 	for i := range lines {
 		for j := range lines[i].Spans {
-			if lines[i].Spans[j].Background == StyleNone {
-				lines[i].Spans[j].Background = s.base
+			if lines[i].Spans[j].Background != StyleNone {
+				continue
 			}
+			background := s.base
+			if lines[i].Spans[j].Mark {
+				background = s.emphasis
+			}
+			lines[i].Spans[j].Background = background
 		}
 	}
 	return lines

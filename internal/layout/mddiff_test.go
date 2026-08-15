@@ -191,7 +191,11 @@ func TestChangedHeadingKeepsItsStyle(t *testing.T) {
 				continue
 			}
 			found = true
-			if s.Background != StyleDiffRemove && s.Background != StyleDiffAdd {
+			// Either the whole-unit wash or, on the changed word itself, the
+			// brighter emphasis — but never none.
+			switch s.Background {
+			case StyleDiffRemove, StyleDiffAdd, StyleDiffRemoveWord, StyleDiffAddWord:
+			default:
 				t.Errorf("heading span %q has no diff background", s.Text)
 			}
 		}
@@ -294,5 +298,113 @@ func TestEveryMarkdownRowCarriesASourceLine(t *testing.T) {
 					split, i, line.SearchText)
 			}
 		}
+	}
+}
+
+// emphasised collects the text carrying each word background, which is what a
+// reader sees as "this is the part that changed".
+func emphasised(d DiffDocument, background Style) string {
+	var sb strings.Builder
+	for _, line := range d.Lines {
+		for _, s := range line.Spans {
+			if s.Background == background {
+				sb.WriteString(s.Text)
+			}
+		}
+	}
+	return sb.String()
+}
+
+// The point of marking inlines rather than washing the block: a one-word edit
+// inside a paragraph shows as one word, on each side.
+func TestMarkedWordsAreEmphasised(t *testing.T) {
+	d := RenderDiff(buildMDDiff("The quick brown fox.\n", "The slow brown fox.\n", mdUnfolded),
+		DiffOptions{Width: 100, SideBySide: true})
+
+	if got := emphasised(d, StyleDiffRemoveWord); got != "quick" {
+		t.Errorf("emphasised removal %q, want quick", got)
+	}
+	if got := emphasised(d, StyleDiffAddWord); got != "slow" {
+		t.Errorf("emphasised addition %q, want slow", got)
+	}
+}
+
+// The rest of a changed block still reads as changed: the marks pick out the
+// words, the wash keeps the block a band.
+func TestUnmarkedTextKeepsTheBlockWash(t *testing.T) {
+	d := RenderDiff(buildMDDiff("The quick brown fox.\n", "The slow brown fox.\n", mdUnfolded),
+		DiffOptions{Width: 100, SideBySide: true})
+
+	if got := emphasised(d, StyleDiffRemove); !strings.Contains(got, "brown") {
+		t.Errorf("unchanged words lost the removal wash: %q", got)
+	}
+	if got := emphasised(d, StyleDiffAdd); !strings.Contains(got, "brown") {
+		t.Errorf("unchanged words lost the addition wash: %q", got)
+	}
+}
+
+// A mark inside a link must not cost the link its styling or its target: the
+// mark is one more property of the piece, not a replacement for them.
+func TestMarkInsideALinkKeepsTheLink(t *testing.T) {
+	d := RenderDiff(buildMDDiff(
+		"See [the old docs](http://example.com/a).\n",
+		"See [the new docs](http://example.com/a).\n",
+		mdUnfolded), DiffOptions{Width: 100, SideBySide: true})
+
+	var marked bool
+	for _, line := range d.Lines {
+		for _, s := range line.Spans {
+			if s.Style != StyleLink {
+				continue
+			}
+			if s.LinkTarget != "http://example.com/a" {
+				t.Errorf("link span %q lost its target: %q", s.Text, s.LinkTarget)
+			}
+			if s.Background == StyleDiffAddWord || s.Background == StyleDiffRemoveWord {
+				marked = true
+			}
+		}
+	}
+	if !marked {
+		t.Errorf("the changed word inside the link should be emphasised:\n%s", renderedText(d))
+	}
+}
+
+// Code and tables keep the whole-unit band, since a mark on them could not be
+// drawn: nothing must claim a precision the renderer cannot deliver.
+func TestCodeAndTablesGetNoWordEmphasis(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+	}{
+		{"code", "```\none two\nthree four\n```\n", "```\none two\nthree FIVE\n```\n"},
+		{"table", "| a | b |\n|---|---|\n| 1 | 2 |\n", "| a | b |\n|---|---|\n| 1 | 3 |\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := RenderDiff(buildMDDiff(tt.a, tt.b, mdUnfolded), DiffOptions{Width: 100, SideBySide: true})
+			if got := emphasised(d, StyleDiffAddWord) + emphasised(d, StyleDiffRemoveWord); got != "" {
+				t.Errorf("emphasis = %q, want none", got)
+			}
+			// It is still visibly changed.
+			if emphasised(d, StyleDiffAdd) == "" || emphasised(d, StyleDiffRemove) == "" {
+				t.Errorf("the unit lost its band:\n%s", renderedText(d))
+			}
+		})
+	}
+}
+
+// A mark must survive wrapping, including the hard split of a run too wide for
+// the pane: the fields of a run are what carry it.
+func TestMarksSurviveWrapping(t *testing.T) {
+	long := strings.Repeat("word ", 40)
+	d := RenderDiff(buildMDDiff(long+"quick end\n", long+"slow end\n", mdUnfolded),
+		DiffOptions{Width: 60, SideBySide: true})
+
+	if got := emphasised(d, StyleDiffRemoveWord); got != "quick" {
+		t.Errorf("emphasised removal %q, want quick", got)
+	}
+	if got := emphasised(d, StyleDiffAddWord); got != "slow" {
+		t.Errorf("emphasised addition %q, want slow", got)
 	}
 }

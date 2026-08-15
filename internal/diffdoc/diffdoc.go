@@ -181,6 +181,12 @@ func pair(left, right lineAt, del, ins difftext.Edit, wordDiff bool) []Row {
 		if wordDiff {
 			if words, ok := intraline(l.Text, r.Text); ok {
 				l.Words, r.Words = words, words
+				// In Markdown mode the row draws blocks, not text, so the
+				// word diff has to be pushed down into the inlines it
+				// applies to; the segments alone would be offsets into a
+				// string nothing renders.
+				l.Blocks = markInlines(l.Blocks, words, difftext.OpDelete)
+				r.Blocks = markInlines(r.Blocks, words, difftext.OpInsert)
 			}
 		}
 		rows = append(rows, Row{Kind: RowChanged, Left: l, Right: r})

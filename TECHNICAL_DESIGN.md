@@ -319,6 +319,26 @@ Only one file is shown. Several changed files are reported as a list to choose f
 
 `editTarget` is empty when no side is on disk, as for `A..B`, and `v` says so instead of opening a path that does not exist. `reload` re-runs the whole of `loadGit`, so `r` picks up a commit or a stage made outside the viewer.
 
+### 13.6 Markdown-aware comparison
+
+`diffdoc.BuildMarkdown` compares two parsed documents block by block. The unit is a `doc.Block`, except that adjacent table rows form one unit, since a table's columns are sized across all of its rows and diffing them separately would let the two sides pick different widths.
+
+Comparing blocks rather than rendered lines is what makes the feature width-independent: a resize re-renders without re-diffing, preserving the `buildDiff`/`render` split. It also fixes more than a rewrap — a one-word edit inside a wrapped paragraph reflows every line below it, and a rendered-line diff would report all of them.
+
+Alignment itself is shared with the line path. `build` takes a `lineAt` per side, so the aligner only ever asks for line *i* of a side and never learns whether the underlying element was a source line or a parsed block; folding, pairing and the intraline diff are the same code.
+
+The alignment key is `{kind, level, prefix, header}` per block followed by `{kind, text, target}` per inline, joined with ASCII control characters that Markdown source cannot contain. Both halves are load-bearing. Keyed on inline text alone, `[docs](old)` and `[docs](new)` are identical and a changed link shows no diff at all — a wrong answer, not an untidy one. Source position is deliberately excluded, so moving a paragraph down a file is not a change. Rewrap-invariance follows from `md.paragraph` joining a paragraph's lines with single spaces: any rewrapping produces a byte-identical block.
+
+`Line.Text` stays the unit's visible text — the concatenation of its inlines — because that is what the word diff runs on, while `Line.Blocks` is what the renderer draws. The two must not be conflated: they are the same string only by construction.
+
+Rendering is in `internal/layout/mddiff.go`. An unchanged unit is drawn **once at full width**: both sides are identical by definition of the key, so two half-width copies would waste the terminal and wrap prose into narrow columns for nothing. Only a changed unit splits into panes, and a horizontal rule marks every transition between the two shapes, including one closing a split section that reaches the end of the document. A unit renders through `Render(doc.Document{Blocks: unit})`, which reads only `Blocks`, and each spliced line's `Source` is overwritten with the row's, since `sourceLine`, `Nearest` and `v` all read it.
+
+Word marks are computed in the semantic layer, not in layout. `markInlines` cuts each side's inlines at the word-diff segment boundaries and sets `doc.Inline.Mark` on the pieces that differ; layout carries the bit through `run` and `Span` exactly as it carries `LinkTarget`, and `unitLines` turns it into the emphasis background. Passing diff ranges into `layout.runs` instead would make the Markdown renderer learn what a diff is, inverting the layering; `search.Highlight` is not reusable either, since its offsets are into `SearchText`, which includes gutter, indent, prefixes and padding. The cut is exact rather than approximate because a unit's text is by construction the concatenation of its inlines, so a byte offset into one is a byte offset into the other. Marking copies the blocks: the parsed document is shared with every other row.
+
+Code blocks and tables are excluded from marking. `renderer.code` renders from `Inlines[0].Text` and ignores the rest, and `parseCells` re-parses a cell from its raw text, so a mark landing on a later inline would silently vanish. Those units keep the whole-unit band, which is honest about what it knows.
+
+Because a row is a block in this mode, the fold marker reads "N unchanged blocks" and `diffSummary` reads `+N -M blocks`. Saying "lines" would misreport the size of what is hidden.
+
 ## 14. Implemented tests
 
 The repository's Go tests cover:
@@ -335,6 +355,8 @@ The repository's Go tests cover:
 - diff alignment, through randomised tests asserting every line of both files appears exactly once and that folding reproduces the unfolded alignment when flattened;
 - diff layout: no row exceeding the width at any width or gutter setting, the divider landing on the same column of every row, preserved indentation, expanded tabs, and the rendered-line-to-row mapping staying in step;
 - diff viewer behaviour over fakes: folding, expansion, hunk navigation, the status summary, reload of both files, and search matches surviving a fold change;
+- Markdown-aware comparison: that rewrapping a corpus of paragraphs at several widths produces no hunks at all, that the line diff still would (so the first test means something), that a changed link target is a difference, that every unit appears exactly once, and that unchanged units render full width while split ones stay aligned;
+- word marks: the marked pieces of a one-word edit, that cutting inlines preserves each side's text exactly and keeps a cut link's kind and target, that the parsed document is never written through, that marks survive wrapping and a hard split, and that code blocks and tables get the band instead;
 - git mode over a fake runner: the arguments and hardening flags of each command, revision-against-path resolution, the spec each command line maps to, added, deleted and binary files, the editor key with no file on disk, refetching on reload, and clean errors for a missing repository, a missing git, an unresolvable operand, and more than one changed file;
 - application paging, status text, search interaction, editing/reload behavior, resize reflow, input-pump ownership, signal handling, CRLF frame rows, and terminal lifecycle through fakes.
 

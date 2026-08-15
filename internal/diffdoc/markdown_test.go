@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/schambon/mdv/internal/doc"
 	"github.com/schambon/mdv/internal/md"
 )
 
@@ -228,4 +229,147 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// marked joins the marked pieces of a side's inlines, which is what a renderer
+// will emphasise.
+func marked(blocks []doc.Block) string {
+	var out []string
+	for _, b := range blocks {
+		for _, in := range b.Inlines {
+			if in.Mark {
+				out = append(out, in.Text)
+			}
+		}
+	}
+	return strings.Join(out, "|")
+}
+
+// inlineText is a side's whole text, reassembled from its inlines. Cutting
+// them at word boundaries must not lose or duplicate a byte.
+func inlineText(blocks []doc.Block) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		for _, in := range b.Inlines {
+			sb.WriteString(in.Text)
+		}
+	}
+	return sb.String()
+}
+
+func changedRow(t *testing.T, d Document) Row {
+	t.Helper()
+	for _, row := range d.Rows {
+		if row.Kind == RowChanged {
+			return row
+		}
+	}
+	t.Fatal("no changed row")
+	return Row{}
+}
+
+// A one-word edit marks that word on each side, not the whole paragraph.
+func TestMarkedInlines(t *testing.T) {
+	d := buildMD(t, "The quick brown fox.\n", "The slow brown fox.\n", Options{Context: -1, WordDiff: true})
+	row := changedRow(t, d)
+
+	if got := marked(row.Left.Blocks); got != "quick" {
+		t.Errorf("left marks = %q, want quick", got)
+	}
+	if got := marked(row.Right.Blocks); got != "slow" {
+		t.Errorf("right marks = %q, want slow", got)
+	}
+}
+
+// Cutting inlines apart must preserve the text exactly: it is the same text
+// the reader sees, and the diff has no licence to edit it.
+func TestMarkingPreservesText(t *testing.T) {
+	a := "A *bold* claim about [docs](http://old) and `code` here.\n"
+	b := "A *bold* claim about [docs](http://new) and `code` there.\n"
+
+	d := buildMD(t, a, b, Options{Context: -1, WordDiff: true})
+	row := changedRow(t, d)
+
+	if got := inlineText(row.Left.Blocks); got != row.Left.Text {
+		t.Errorf("left text = %q, want %q", got, row.Left.Text)
+	}
+	if got := inlineText(row.Right.Blocks); got != row.Right.Text {
+		t.Errorf("right text = %q, want %q", got, row.Right.Text)
+	}
+}
+
+// A mark may fall inside a styled inline, and the pieces must keep that inline's
+// kind and target: a cut link is still a link.
+func TestMarkingKeepsInlineIdentity(t *testing.T) {
+	a := "See [the old docs](http://example.com/a).\n"
+	b := "See [the new docs](http://example.com/a).\n"
+
+	d := buildMD(t, a, b, Options{Context: -1, WordDiff: true})
+	row := changedRow(t, d)
+
+	var sawMarkedLink bool
+	for _, b := range row.Right.Blocks {
+		for _, in := range b.Inlines {
+			if in.Kind != doc.InlineLink {
+				continue
+			}
+			if in.Target != "http://example.com/a" {
+				t.Errorf("link piece %q lost its target: %q", in.Text, in.Target)
+			}
+			if in.Mark {
+				sawMarkedLink = true
+			}
+		}
+	}
+	if !sawMarkedLink {
+		t.Error("the changed word inside the link should be marked")
+	}
+}
+
+// The parsed document is shared by every row, so marking must copy rather than
+// write through to it.
+func TestMarkingDoesNotTouchTheParsedDocument(t *testing.T) {
+	parsed := md.Parse([]byte("The quick brown fox.\n"))
+	_ = BuildMarkdown(parsed, md.Parse([]byte("The slow brown fox.\n")), Options{Context: -1, WordDiff: true})
+
+	for _, b := range parsed.Blocks {
+		for _, in := range b.Inlines {
+			if in.Mark {
+				t.Fatalf("parsing produced a mark on %q", in.Text)
+			}
+		}
+	}
+}
+
+// Marks cannot reach a code block's later inlines or a table cell — the
+// renderer reads neither — so those units keep the whole-unit band instead of
+// claiming a precision they do not have.
+func TestNoMarksWhereTheyCannotBeDrawn(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+	}{
+		{"code", "```\none two\nthree four\n```\n", "```\none two\nthree FIVE\n```\n"},
+		{"table", "| a | b |\n|---|---|\n| 1 | 2 |\n", "| a | b |\n|---|---|\n| 1 | 3 |\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := buildMD(t, tt.a, tt.b, Options{Context: -1, WordDiff: true})
+			for _, row := range d.Rows {
+				if got := marked(row.Left.Blocks) + marked(row.Right.Blocks); got != "" {
+					t.Errorf("marks = %q, want none", got)
+				}
+			}
+		})
+	}
+}
+
+// Without --word-diff nothing is marked at all.
+func TestNoMarksWithoutWordDiff(t *testing.T) {
+	d := buildMD(t, "The quick brown fox.\n", "The slow brown fox.\n", Options{Context: -1})
+	for _, row := range d.Rows {
+		if got := marked(row.Left.Blocks) + marked(row.Right.Blocks); got != "" {
+			t.Errorf("marks = %q, want none", got)
+		}
+	}
 }

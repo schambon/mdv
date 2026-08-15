@@ -122,6 +122,106 @@ func newUnit(blocks []doc.Block) unit {
 	return u
 }
 
+// markInlines cuts a unit's inlines at the word-diff boundaries and marks the
+// pieces that differ, returning fresh blocks: the originals belong to the
+// parsed document and are shared with every other row.
+//
+// The cut is exact rather than approximate because a unit's text is by
+// construction the concatenation of its inlines' text — the same walk newUnit
+// makes — so a byte offset into one is a byte offset into the other. Passing
+// ranges down to the renderer instead would make the Markdown renderer learn
+// what a diff is.
+//
+// Marks are deliberately not applied to code blocks or tables. A code block
+// renders from Inlines[0] alone and a table cell is re-parsed from its raw
+// text, so a mark on a later inline would silently vanish; those units keep
+// the whole-unit band, which is honest about what it knows.
+func markInlines(blocks []doc.Block, words []difftext.Segment, op difftext.Op) []doc.Block {
+	// Text mode has no blocks at all, and must keep its nil: a non-nil empty
+	// slice would make the row claim to be a Markdown one.
+	if len(blocks) == 0 {
+		return blocks
+	}
+	for _, b := range blocks {
+		if b.Kind == doc.BlockCode || b.Kind == doc.BlockTableRow {
+			return blocks
+		}
+	}
+
+	cuts := sideSegments(words, op)
+	if len(cuts) == 0 {
+		return blocks
+	}
+
+	out := make([]doc.Block, len(blocks))
+	for i, b := range blocks {
+		out[i] = b
+		out[i].Inlines = make([]doc.Inline, 0, len(b.Inlines))
+		for _, in := range b.Inlines {
+			out[i].Inlines = append(out[i].Inlines, cuts.cut(in)...)
+		}
+	}
+	return out
+}
+
+// segment is one stretch of a side's text and whether it differs.
+type segment struct {
+	length int
+	mark   bool
+}
+
+// segments walks a side's text, handing out its next n bytes at a time.
+type segments []segment
+
+// sideSegments keeps the word-diff segments belonging to one side. Their texts
+// concatenated are exactly that side's text, which is what makes the walk below
+// a simple counter rather than a search.
+func sideSegments(words []difftext.Segment, op difftext.Op) segments {
+	var out segments
+	for _, s := range words {
+		if s.Op != difftext.OpEqual && s.Op != op {
+			continue // the other side's half of the change
+		}
+		if len(s.Text) == 0 {
+			continue
+		}
+		out = append(out, segment{length: len(s.Text), mark: s.Op == op})
+	}
+	return out
+}
+
+// cut splits one inline wherever a segment boundary falls inside it. An inline
+// with no text — a table separator, an empty link — is passed through, so the
+// inline list keeps its shape.
+func (s *segments) cut(in doc.Inline) []doc.Inline {
+	if in.Text == "" {
+		return []doc.Inline{in}
+	}
+
+	var out []doc.Inline
+	text := in.Text
+	for text != "" {
+		if len(*s) == 0 {
+			// The segments ran out: keep the rest rather than lose it. The two
+			// walks agree by construction, so this is a bug guard, not a case.
+			piece := in
+			piece.Text = text
+			return append(out, piece)
+		}
+
+		n := min(len(text), (*s)[0].length)
+		piece := in
+		piece.Text, piece.Mark = text[:n], (*s)[0].mark
+		out = append(out, piece)
+
+		text = text[n:]
+		if (*s)[0].length -= n; (*s)[0].length == 0 {
+			*s = (*s)[1:]
+		}
+	}
+	return out
+}
+
 // Separators are ASCII control characters that Markdown source will not
 // contain, so no combination of text and target can forge a key boundary.
 const (

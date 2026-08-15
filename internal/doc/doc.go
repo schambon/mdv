@@ -36,11 +36,18 @@ const (
 
 // Inline is a run of text with a single kind. Contents are not recursively
 // parsed, so Text holds the literal inner text of the construct.
+//
+// Mark is never set by the parser. Diffing sets it on the parts of a changed
+// block that actually differ, cutting inlines at word-diff boundaries so that
+// the mark is carried by the ordinary inline list rather than by offsets a
+// renderer would have to map. What a mark means is the caller's business:
+// layout only propagates it, as it propagates Target.
 type Inline struct {
 	Kind   InlineKind
 	Text   string
 	Target string
 	Source SourceRange
+	Mark   bool
 }
 
 // BlockKind identifies a block-level construct.

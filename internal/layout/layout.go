@@ -62,6 +62,10 @@ type Span struct {
 	Background Style
 	LinkTarget string
 	Source     doc.SourceRange
+	// Mark is carried through from doc.Inline.Mark. Layout does not interpret
+	// it: diff rendering sets the emphasis background where it is set, exactly
+	// as it does nothing with LinkTarget beyond passing it on.
+	Mark bool
 }
 
 // RenderedLine is one drawable row. SearchText is the row's visible text,
@@ -255,6 +259,7 @@ type run struct {
 	background Style
 	linkTarget string
 	source     doc.SourceRange
+	mark       bool
 }
 
 // wrapped lays out a block's inlines, breaking rows between runs. Continuation
@@ -287,7 +292,7 @@ func (r *renderer) wrapped(b doc.Block, prefix string, base Style) {
 		for _, rn := range wl {
 			r.appendSpan(&line, Span{
 				Text: rn.text, Cells: rn.cells, Style: rn.style,
-				LinkTarget: rn.linkTarget, Source: rn.source,
+				LinkTarget: rn.linkTarget, Source: rn.source, Mark: rn.mark,
 			})
 		}
 		r.lines = append(r.lines, line)
@@ -339,7 +344,7 @@ func wrapRuns(runs []run, avail int) [][]run {
 				emit(run{
 					text: chunk, cells: Width(chunk),
 					style: rn.style, background: rn.background,
-					linkTarget: rn.linkTarget, source: rn.source,
+					linkTarget: rn.linkTarget, source: rn.source, mark: rn.mark,
 				})
 			}
 			continue
@@ -373,6 +378,7 @@ func (r *renderer) runs(inlines []doc.Inline, base Style) []run {
 				style:      style,
 				linkTarget: in.Target,
 				source:     in.Source,
+				mark:       in.Mark,
 			})
 		}
 	}
