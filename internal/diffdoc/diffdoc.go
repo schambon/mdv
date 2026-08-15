@@ -97,7 +97,23 @@ const similarityFloor = 0.25
 
 // Build aligns two slices of lines into a diff document.
 func Build(a, b []string, opts Options) Document {
-	rows := align(a, b, opts.WordDiff)
+	return build(
+		difftext.Lines(a, b),
+		func(i int) Line { return Line{Text: a[i], Number: i + 1} },
+		func(i int) Line { return Line{Text: b[i], Number: i + 1} },
+		opts,
+	)
+}
+
+// lineAt produces one side's Line for an index into that side's input. It is
+// what lets alignment be shared: the aligner only ever asks "give me line i of
+// this side", and never needs to know whether the underlying element was a
+// source line or a parsed block.
+type lineAt func(index int) Line
+
+// build aligns an edit script and folds the result.
+func build(edits []difftext.Edit, left, right lineAt, opts Options) Document {
+	rows := align(edits, left, right, opts.WordDiff)
 	if opts.Context >= 0 {
 		rows = fold(rows, opts.Context)
 	}
@@ -105,13 +121,11 @@ func Build(a, b []string, opts Options) Document {
 }
 
 // align walks the edit script and pairs it into rows. A delete immediately
-// followed by an insert is the interesting case: those are the lines that were
-// rewritten, and pairing them opposite each other is what makes a side-by-side
-// view readable rather than a list of removals followed by a list of
-// additions.
-func align(a, b []string, wordDiff bool) []Row {
-	edits := difftext.Lines(a, b)
-
+// followed by an insert is the interesting case: those are the elements that
+// were rewritten, and pairing them opposite each other is what makes a
+// side-by-side view readable rather than a list of removals followed by a list
+// of additions.
+func align(edits []difftext.Edit, left, right lineAt, wordDiff bool) []Row {
 	var rows []Row
 	for i := 0; i < len(edits); i++ {
 		e := edits[i]
@@ -120,8 +134,8 @@ func align(a, b []string, wordDiff bool) []Row {
 			for j := range e.ALen {
 				rows = append(rows, Row{
 					Kind:  RowEqual,
-					Left:  Line{Text: a[e.AStart+j], Number: e.AStart + j + 1},
-					Right: Line{Text: b[e.BStart+j], Number: e.BStart + j + 1},
+					Left:  left(e.AStart + j),
+					Right: right(e.BStart + j),
 				})
 			}
 
@@ -130,22 +144,22 @@ func align(a, b []string, wordDiff bool) []Row {
 			// rewrite. difftext never emits two edits of one kind in a row, so
 			// the neighbour is either the matching insert or unrelated text.
 			if i+1 < len(edits) && edits[i+1].Op == difftext.OpInsert {
-				rows = append(rows, pair(a, b, e, edits[i+1], wordDiff)...)
+				rows = append(rows, pair(left, right, e, edits[i+1], wordDiff)...)
 				i++
 				continue
 			}
-			rows = append(rows, removed(a, e)...)
+			rows = append(rows, removed(left, e)...)
 
 		case difftext.OpInsert:
 			// The same rewrite reported the other way round. Which order the
 			// algorithm chooses depends on the path it takes through the edit
 			// graph, and the reader should not be able to tell.
 			if i+1 < len(edits) && edits[i+1].Op == difftext.OpDelete {
-				rows = append(rows, pair(a, b, edits[i+1], e, wordDiff)...)
+				rows = append(rows, pair(left, right, edits[i+1], e, wordDiff)...)
 				i++
 				continue
 			}
-			rows = append(rows, added(b, e)...)
+			rows = append(rows, added(right, e)...)
 		}
 	}
 	return rows
@@ -153,55 +167,42 @@ func align(a, b []string, wordDiff bool) []Row {
 
 // pair aligns a delete/insert run into changed rows, with the leftovers of the
 // longer side trailing as pure removals or additions.
-func pair(a, b []string, del, ins difftext.Edit, wordDiff bool) []Row {
+func pair(left, right lineAt, del, ins difftext.Edit, wordDiff bool) []Row {
 	common := min(del.ALen, ins.BLen)
 
 	rows := make([]Row, 0, max(del.ALen, ins.BLen))
 	for j := range common {
-		left := Line{Text: a[del.AStart+j], Number: del.AStart + j + 1}
-		right := Line{Text: b[ins.BStart+j], Number: ins.BStart + j + 1}
+		l, r := left(del.AStart+j), right(ins.BStart+j)
 		if wordDiff {
-			if words, ok := intraline(left.Text, right.Text); ok {
-				left.Words, right.Words = words, words
+			if words, ok := intraline(l.Text, r.Text); ok {
+				l.Words, r.Words = words, words
 			}
 		}
-		rows = append(rows, Row{Kind: RowChanged, Left: left, Right: right})
+		rows = append(rows, Row{Kind: RowChanged, Left: l, Right: r})
 	}
 	for j := common; j < del.ALen; j++ {
-		rows = append(rows, Row{
-			Kind: RowRemoved,
-			Left: Line{Text: a[del.AStart+j], Number: del.AStart + j + 1},
-		})
+		rows = append(rows, Row{Kind: RowRemoved, Left: left(del.AStart + j)})
 	}
 	for j := common; j < ins.BLen; j++ {
-		rows = append(rows, Row{
-			Kind:  RowAdded,
-			Right: Line{Text: b[ins.BStart+j], Number: ins.BStart + j + 1},
-		})
+		rows = append(rows, Row{Kind: RowAdded, Right: right(ins.BStart + j)})
 	}
 	return rows
 }
 
 // removed turns a lone deletion into rows with an empty right side.
-func removed(a []string, e difftext.Edit) []Row {
+func removed(left lineAt, e difftext.Edit) []Row {
 	rows := make([]Row, 0, e.ALen)
 	for j := range e.ALen {
-		rows = append(rows, Row{
-			Kind: RowRemoved,
-			Left: Line{Text: a[e.AStart+j], Number: e.AStart + j + 1},
-		})
+		rows = append(rows, Row{Kind: RowRemoved, Left: left(e.AStart + j)})
 	}
 	return rows
 }
 
 // added turns a lone insertion into rows with an empty left side.
-func added(b []string, e difftext.Edit) []Row {
+func added(right lineAt, e difftext.Edit) []Row {
 	rows := make([]Row, 0, e.BLen)
 	for j := range e.BLen {
-		rows = append(rows, Row{
-			Kind:  RowAdded,
-			Right: Line{Text: b[e.BStart+j], Number: e.BStart + j + 1},
-		})
+		rows = append(rows, Row{Kind: RowAdded, Right: right(e.BStart + j)})
 	}
 	return rows
 }
