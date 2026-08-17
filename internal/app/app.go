@@ -95,6 +95,17 @@ type App struct {
 	diff     diffdoc.Document
 	diffRows []int
 
+	// Git mode with more than one changed file. files is the list the sidebar
+	// shows, current the one being compared, and diffs holds the documents of
+	// the files already visited so their expanded folds survive a switch back.
+	repo        *git.Repo
+	spec        git.Spec
+	files       []git.File
+	stats       map[string]git.Stat
+	current     int
+	currentFile string
+	diffs       map[int]diffdoc.Document
+
 	top     int
 	mode    mode
 	message string
@@ -281,7 +292,9 @@ func (a *App) renderWidth() int {
 func (a *App) render() {
 	if a.cfg.diffMode() {
 		rendered := layout.RenderDiff(a.diff, layout.DiffOptions{
-			Width:       a.renderWidth(),
+			// The sidebar takes its cells out of the diff. RenderDiff never
+			// learns it exists; its own clipping keeps to the budget.
+			Width:       a.renderWidth() - a.sidebarCells(),
 			LineNumbers: a.cfg.LineNumbers,
 			SideBySide:  a.cfg.SideBySide,
 		})
@@ -431,8 +444,8 @@ func (a *App) statusText() string {
 	}
 
 	if a.cfg.diffMode() {
-		return fmt.Sprintf("%s → %s  %d%%  %s",
-			a.src.Name, a.compare.Name, percent, a.diffSummary())
+		return fmt.Sprintf("%s → %s%s  %d%%  %s",
+			a.src.Name, a.compare.Name, a.filePosition(), percent, a.diffSummary())
 	}
 
 	total := a.sourceLines
@@ -441,6 +454,16 @@ func (a *App) statusText() string {
 	}
 	return fmt.Sprintf("%s  %d%%  source line %d/%d",
 		a.src.Name, percent, a.sourceLine(), total)
+}
+
+// filePosition places the file being compared in the changed-file list. It is
+// shown whenever there is a list, including when the terminal is too narrow
+// for the sidebar and this is the only sign that other files changed.
+func (a *App) filePosition() string {
+	if len(a.files) < 2 {
+		return ""
+	}
+	return fmt.Sprintf("  file %d/%d", a.current+1, len(a.files))
 }
 
 // diffSummary counts the changed lines, so the reader knows the size of what
@@ -509,10 +532,22 @@ func (a *App) draw() error {
 	sb.WriteString(terminal.ClearScreen)
 
 	height := a.pageHeight()
+	var sidebar [][]layout.Span
+	if width := a.sidebarWidth(); width > 0 {
+		sidebar = a.sidebarRows(width, height)
+	}
+
 	for row := range height {
 		index := a.top + row
+		var line layout.RenderedLine
 		if index < len(a.rendered.Lines) {
-			sb.WriteString(a.styler.Line(a.highlight(index)))
+			line = a.highlight(index)
+		}
+		if sidebar != nil {
+			line = a.compose(sidebar[row], line)
+		}
+		if len(line.Spans) > 0 {
+			sb.WriteString(a.styler.Line(line))
 		}
 		sb.WriteString(terminal.ClearToEOL)
 		// OPOST is off, so line endings must be written explicitly.

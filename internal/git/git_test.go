@@ -211,6 +211,45 @@ func TestParseNameStatus(t *testing.T) {
 	}
 }
 
+// Stats takes the same hardening as Changed, since it is the same command in a
+// different format.
+func TestStatsArguments(t *testing.T) {
+	f := newFake(t)
+	f.replies["diff --no-ext-diff --no-textconv --no-renames --numstat -z v1 v2 -- sub"] =
+		"3\t1\tsub/a.md\x00"
+
+	stats, err := f.open(t).Stats(Spec{Old: Side{Rev: "v1"}, New: Side{Rev: "v2"}}, "sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stats["sub/a.md"]; got != (Stat{Added: 3, Removed: 1}) {
+		t.Errorf("stat = %+v, want +3 -1", got)
+	}
+}
+
+func TestParseNumstat(t *testing.T) {
+	stats := parseNumstat([]byte("3\t1\ta.md\x000\t7\tdir/b.go\x00-\t-\tlogo.png\x00"))
+	want := map[string]Stat{
+		"a.md":     {Added: 3, Removed: 1},
+		"dir/b.go": {Added: 0, Removed: 7},
+		"logo.png": {Binary: true},
+	}
+	if len(stats) != len(want) {
+		t.Fatalf("got %+v, want %+v", stats, want)
+	}
+	for path, w := range want {
+		if stats[path] != w {
+			t.Errorf("%s = %+v, want %+v", path, stats[path], w)
+		}
+	}
+}
+
+func TestParseNumstatEmpty(t *testing.T) {
+	if stats := parseNumstat(nil); len(stats) != 0 {
+		t.Errorf("got %+v, want none", stats)
+	}
+}
+
 func TestParseNameStatusEmpty(t *testing.T) {
 	if files := parseNameStatus(nil); len(files) != 0 {
 		t.Errorf("got %+v, want none", files)

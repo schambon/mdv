@@ -170,7 +170,7 @@ The status line is:
 OLD → NEW  PERCENT%  +ADDED -REMOVED
 ```
 
-`identical` replaces the counts when the files do not differ. A rewritten line counts as both an addition and a removal.
+`identical` replaces the counts when the files do not differ. A rewritten line counts as both an addition and a removal. In git mode with several changed files, `file N/M` follows the names.
 
 Keys added in diff mode:
 
@@ -180,6 +180,7 @@ Keys added in diff mode:
 | `x` | Expand the first folded run at or below the top of the view |
 | `X` | Expand every fold |
 | `z` | Collapse unchanged context again |
+| `>`, `<`, `→`, `←` | Move to the next or previous changed file (git mode, §9.2) |
 
 `l` also works here, toggling both panes' gutters at once.
 
@@ -226,13 +227,25 @@ mdv git A...B              their merge base against B
 
 At most two operands are accepted. Whether one is a revision or a path is decided by asking the repository: an existing file is a path, then anything git resolves as a revision is a revision, then a path git still tracks is a path — so a file deleted from the working tree can still be named. Anything else is an error naming the operand. An operand beginning with `-` is refused rather than passed to git, which would read it as an option.
 
-Exactly one file is shown. When several files differ and no path was given, mdv lists them and exits rather than choosing one. When none differ, it says so. A file added on one side is compared against emptiness, and so is a deleted one.
+One file is shown at a time. When several files differ, they are listed in a sidebar and the diff shows whichever is selected; see §9.3. When none differ, mdv says so and exits. A file added on one side is compared against emptiness, and so is a deleted one.
 
 Content holding a NUL byte is not rendered: each side reads `Binary file, N bytes`.
 
 `v` opens the working-tree file when a side is one; comparing two revisions, neither side is a file on disk and `v` reports that instead. `r` asks git again, so a commit or a stage made outside the viewer is picked up.
 
 Git is run to fetch file contents, never to compute a difference. It is never given the terminal, and it is invoked with external diff drivers, textconv filters and optional locks disabled, so a repository's own configuration cannot make mdv run a program it did not choose. Errors from git — no repository, an unknown revision, no `git` on `PATH` — are reported as they are.
+
+### 9.3 The changed-file sidebar
+
+When git mode finds more than one changed file, a list of them is drawn down the left of the screen, separated from the diff by a rule. `mdv diff OLD NEW` never shows it: two files named on the command line are not a list to choose from.
+
+Each entry shows a selection marker, git's status letter, the path, and git's `+N -M` line counts. The marker, not the highlight, is what makes the selection visible without colour. A path too long for the list keeps its tail, with the cut marked by an ellipsis, since the tail is what names the file. The counts come from a single `git diff --numstat` over the whole list, so labelling the list does not require diffing every file in it; they are git's line counts, and in Markdown mode they will not agree with the status line's `+N -M blocks`, which describes the file actually on screen.
+
+The list has exactly one interaction: pick a file. `>` and `<`, or the right and left arrows, move the selection and rebuild the diff beside it. There is no focus model and nothing else is focusable — `j`, `k`, search and every other key always act on the diff. Moving off either end of the list says so rather than wrapping.
+
+Switching files resets the viewport to the top and clears the active search match, since row indices mean nothing in a document they were not measured against. Folds expanded in a file are kept, so returning to it finds it as it was left. `r` re-asks git; the file on screen is followed by name, and falls back to the first of what still differs when it is no longer in the list.
+
+The list is sized to its longest entry, between 18 and 32 columns. It is dropped entirely when the diff would be left less than 40 columns; the status line then reads `file N/M`, and the keys still work. The counts are dropped for the whole list at once, never for individual rows, when the paths would otherwise have less than ten columns.
 
 ## 10. Terminal lifecycle
 

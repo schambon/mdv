@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/schambon/mdv/internal/diffdoc"
+	"github.com/schambon/mdv/internal/terminal"
 )
 
 // Diff mode adds folding and hunk navigation. The bindings are single keys
@@ -27,10 +28,30 @@ func (a *App) handleDiffRune(r rune) bool {
 		a.jumpChange(forward)
 	case '[':
 		a.jumpChange(backward)
+	case '>':
+		return a.selectRelative(1)
+	case '<':
+		return a.selectRelative(-1)
 	default:
 		return false
 	}
 	return true
+}
+
+// handleDiffKey handles the non-rune keys diff mode adds. The arrows move
+// through the changed-file list: nothing scrolls horizontally, so they are
+// free, and they are what a reader tries first on a list.
+func (a *App) handleDiffKey(key terminal.Key) bool {
+	if !a.cfg.diffMode() {
+		return false
+	}
+	switch key {
+	case terminal.KeyRight:
+		return a.selectRelative(1)
+	case terminal.KeyLeft:
+		return a.selectRelative(-1)
+	}
+	return false
 }
 
 type direction int

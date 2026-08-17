@@ -18,12 +18,19 @@ const keyHelp = "j/k move  space/b page  g/G ends  / ? search  n/N next  l numbe
 
 const diffKeyHelp = "j/k move  space/b page  [ ] hunk  x/X expand  z collapse  l numbers  / search  v edit  q quit"
 
+// fileKeyHelp is added only when git mode found more than one changed file,
+// since the keys do nothing otherwise.
+const fileKeyHelp = "< > file  "
+
 // help is the key summary for the current mode.
 func (a *App) help() string {
-	if a.cfg.diffMode() {
-		return diffKeyHelp
+	if !a.cfg.diffMode() {
+		return keyHelp
 	}
-	return keyHelp
+	if len(a.files) > 1 {
+		return fileKeyHelp + diffKeyHelp
+	}
+	return diffKeyHelp
 }
 
 // handle dispatches one event and reports whether the viewer should quit.
@@ -37,6 +44,12 @@ func (a *App) handle(ev terminal.Event) (quit bool, err error) {
 
 // handleNormalKey handles a keypress in normal mode.
 func (a *App) handleNormalKey(ev terminal.Event) (bool, error) {
+	// As with the rune bindings, diff mode is consulted first and declines
+	// every key when not comparing two files.
+	if a.handleDiffKey(ev.Key) {
+		return false, nil
+	}
+
 	switch ev.Key {
 	case terminal.KeyDown, terminal.KeyEnter:
 		a.scroll(1)

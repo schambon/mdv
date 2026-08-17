@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,39 @@ func (f *fakeRepo) changed(t *testing.T, path, staged, worktree string) {
 		t.Fatal(err)
 	}
 }
+
+// change is one file the fake repository reports as modified.
+type change struct {
+	path     string
+	staged   string
+	worktree string
+}
+
+// changes declares several changed files, with the numstat counts the sidebar
+// labels them from.
+func (f *fakeRepo) changes(t *testing.T, cs ...change) {
+	t.Helper()
+
+	var status, numstat strings.Builder
+	for _, c := range cs {
+		status.WriteString("M\x00" + c.path + "\x00")
+		fmt.Fprintf(&numstat, "%d\t%d\t%s\x00",
+			countLines(c.worktree), countLines(c.staged), c.path)
+
+		f.replies["show --no-textconv :"+c.path] = c.staged
+		full := filepath.Join(f.root, c.path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(c.worktree), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.replies["diff --no-ext-diff --no-textconv --no-renames --name-status -z --"] = status.String()
+	f.replies["diff --no-ext-diff --no-textconv --no-renames --numstat -z --"] = numstat.String()
+}
+
+func countLines(s string) int { return strings.Count(s, "\n") }
 
 // newGitApp builds a git-mode App without entering the event loop.
 func newGitApp(t *testing.T, repo *fakeRepo, req GitRequest, term *fakeTerminal) (*App, error) {
@@ -280,12 +314,16 @@ func TestGitModeErrors(t *testing.T) {
 			want: "no changes",
 		},
 		{
-			name: "several files",
+			// The file list is found, but labelling it is a second command and
+			// its failure is still git's to report.
+			name: "the file list cannot be counted",
 			setup: func(f *fakeRepo) {
 				f.replies["diff --no-ext-diff --no-textconv --no-renames --name-status -z --"] =
 					"M\x00a.txt\x00M\x00b.txt\x00"
+				f.errs["diff --no-ext-diff --no-textconv --no-renames --numstat -z --"] =
+					errors.New("bad object")
 			},
-			want: "2 files changed",
+			want: "bad object",
 		},
 		{
 			name:  "operand is neither a revision nor a file",

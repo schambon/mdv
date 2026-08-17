@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -232,13 +233,24 @@ type File struct {
 // Changed lists the files that differ between the two sides, optionally
 // restricted to one path.
 func (r *Repo) Changed(s Spec, path string) ([]File, error) {
+	out, err := r.diffList(s, "--name-status", path)
+	if err != nil {
+		return nil, err
+	}
+	return parseNameStatus(out), nil
+}
+
+// diffList runs `git diff` in one of its listing formats. Changed and Stats
+// differ only in that format, and the operand checking and the "--" that keeps
+// a path from being read as a revision must be identical for both.
+func (r *Repo) diffList(s Spec, format, path string) ([]byte, error) {
 	if s.Old.Rev != "" && s.New.Rev != "" {
 		if err := checkOperands(s.Old.Rev, s.New.Rev); err != nil {
 			return nil, err
 		}
 	}
 
-	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-status", "-z"}
+	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", format, "-z"}
 	args = append(args, s.diffArgs()...)
 	// Always terminate, so a path that looks like a revision or a flag cannot
 	// be read as one.
@@ -246,12 +258,7 @@ func (r *Repo) Changed(s Spec, path string) ([]File, error) {
 	if path != "" {
 		args = append(args, path)
 	}
-
-	out, err := r.git(args...)
-	if err != nil {
-		return nil, err
-	}
-	return parseNameStatus(out), nil
+	return r.git(args...)
 }
 
 // parseNameStatus reads the NUL-separated form, which alternates status and
@@ -268,6 +275,48 @@ func parseNameStatus(out []byte) []File {
 		files = append(files, File{Status: status[0], Path: fields[i+1]})
 	}
 	return files
+}
+
+// Stat is git's own count of how much one file changed.
+type Stat struct {
+	Added   int
+	Removed int
+	Binary  bool
+}
+
+// Stats counts the changed lines of every file in one command, so a file list
+// can be labelled without fetching and diffing each file. That is the whole
+// point: loading a file is lazy, and labelling must not undo it.
+//
+// These are git's line counts. In Markdown mode mdv counts blocks, so the
+// numbers here and the ones in the status line answer different questions;
+// the status line is the one about the file on screen.
+func (r *Repo) Stats(s Spec, path string) (map[string]Stat, error) {
+	out, err := r.diffList(s, "--numstat", path)
+	if err != nil {
+		return nil, err
+	}
+	return parseNumstat(out), nil
+}
+
+// parseNumstat reads the NUL-separated form, whose records are
+// "added\tremoved\tpath". Binary files report "-" for both counts.
+func parseNumstat(out []byte) map[string]Stat {
+	stats := make(map[string]Stat)
+	for _, record := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		fields := strings.SplitN(record, "\t", 3)
+		if len(fields) != 3 || fields[2] == "" {
+			continue
+		}
+		added, addErr := strconv.Atoi(fields[0])
+		removed, remErr := strconv.Atoi(fields[1])
+		stats[fields[2]] = Stat{
+			Added:   added,
+			Removed: removed,
+			Binary:  addErr != nil || remErr != nil,
+		}
+	}
+	return stats
 }
 
 // Load fetches both sides of one file. A file that does not exist on a side —

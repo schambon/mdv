@@ -315,9 +315,19 @@ The hardening is not incidental:
 - Output is captured, never inherited, and git never goes through `term.Suspend` the way the editor does. The viewer is in raw mode on the alternate screen, where a child's output cannot be repaired.
 - Content holding a NUL byte is replaced with a `Binary file, N bytes` marker. Raw bytes written to a terminal in raw mode are not recoverable.
 
-Only one file is shown. Several changed files are reported as a list to choose from rather than picked between silently.
+`loadGit` keeps the whole changed-file list but fetches only the file on screen. `Repo.Stats` runs `git diff --numstat` once for the entire list, which is what lets the sidebar label every file without diffing any of them; laziness that a labelling pass undid would not be laziness.
 
-`editTarget` is empty when no side is on disk, as for `A..B`, and `v` says so instead of opening a path that does not exist. `reload` re-runs the whole of `loadGit`, so `r` picks up a commit or a stage made outside the viewer.
+`editTarget` is empty when no side is on disk, as for `A..B`, and `v` says so instead of opening a path that does not exist. `reload` re-runs the whole of `loadGit`, so `r` picks up a commit or a stage made outside the viewer. The list it rebuilds need not be the one it replaced, so the file on screen is followed by name through `indexOf`, not by position.
+
+### 13.5.1 The changed-file sidebar
+
+The sidebar has **no focus model**, and that is the design rather than a simplification of one. It has exactly one interaction — pick a file — so dedicated keys move the selection and the diff is rebuilt to reflect it. A focus model would have bought nothing and cost focus state, per-focus key routing, a per-focus status line, and an answer to "which pane does `j` scroll". `>`/`<` and the arrows were free: `[`, `]`, `x`, `X` and `z` are taken, and nothing scrolls horizontally.
+
+Drawing needs no new machinery in `layout`. `render` lays the diff out at `renderWidth() - sidebarCells()`; `RenderDiff` never learns the sidebar exists, and its own `clipSpans` guarantees the budget. `draw` then builds a **throwaway** `RenderedLine` per screen row — the sidebar entry, a `StyleRule` separator, then `highlight(index).Spans` — and hands it to `styler.Line`, which reads only `Spans`. It must not be stored: its `SearchText` would not equal the concatenation of its spans, which is the invariant search rests on. Search highlighting is applied before composition, so it is unchanged by any of this.
+
+`selectFile` stores the outgoing `diffdoc.Document` in `App.diffs` before loading the new one, so folds expanded in a file survive a switch away and back. The viewport and the active match are reset instead, since a row index measured against one document means nothing in another. The cache is dropped whole on `reload`, where the documents behind it may no longer describe what git reports.
+
+The width is sized to the longest entry rather than to a fraction of the terminal, clamped to `[minSidebarCells, maxSidebarCells]` and to what leaves the diff `minSidebarDiffCells`. Below that the list is dropped, mirroring the `minPaneCells` fallback, and `reflow` re-renders correctly when it appears or disappears. The keys stay live without it, because the status line still reads `file N/M`. Whether the counts fit is decided once for the whole list, not per entry, or the paths would stop at a different column on every row — which is also why the width calculation reserves `minNameCells` even for a short path, so sizing and drawing cannot disagree about whether the counts are there.
 
 ### 13.6 Markdown-aware comparison
 
@@ -357,7 +367,8 @@ The repository's Go tests cover:
 - diff viewer behaviour over fakes: folding, expansion, hunk navigation, the status summary, reload of both files, and search matches surviving a fold change;
 - Markdown-aware comparison: that rewrapping a corpus of paragraphs at several widths produces no hunks at all, that the line diff still would (so the first test means something), that a changed link target is a difference, that every unit appears exactly once, and that unchanged units render full width while split ones stay aligned;
 - word marks: the marked pieces of a one-word edit, that cutting inlines preserves each side's text exactly and keeps a cut link's kind and target, that the parsed document is never written through, that marks survive wrapping and a hard split, and that code blocks and tables get the band instead;
-- git mode over a fake runner: the arguments and hardening flags of each command, revision-against-path resolution, the spec each command line maps to, added, deleted and binary files, the editor key with no file on disk, refetching on reload, and clean errors for a missing repository, a missing git, an unresolvable operand, and more than one changed file;
+- git mode over a fake runner: the arguments and hardening flags of each command, revision-against-path resolution, the spec each command line maps to, added, deleted and binary files, the editor key with no file on disk, refetching on reload, and clean errors for a missing repository, a missing git, an unresolvable operand, and a failed listing;
+- the changed-file sidebar: the list and its numstat labels, selecting with the keys and with the arrows, the ends of the list, the viewport reset and the folds that survive a switch, entries all of one width, head-clipped paths, the fallback on a narrow terminal, and a reload that reorders or drops the file on screen;
 - application paging, status text, search interaction, editing/reload behavior, resize reflow, input-pump ownership, signal handling, CRLF frame rows, and terminal lifecycle through fakes.
 
 Tests run with `go test ./...`, and `go test -race ./...` covers the signal handler, input pump, and terminal state. There are no golden files, pseudo-terminal integration tests, CI configuration, benchmarks, or packaging scripts in the repository.
