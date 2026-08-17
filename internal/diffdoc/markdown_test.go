@@ -1,6 +1,7 @@
 package diffdoc
 
 import (
+	"math/rand"
 	"strings"
 	"testing"
 
@@ -195,6 +196,89 @@ func TestUnitsCoverEveryBlock(t *testing.T) {
 	}
 	if total != len(parsed.Blocks) {
 		t.Fatalf("units cover %d blocks, want %d", total, len(parsed.Blocks))
+	}
+}
+
+// randomMarkdown builds a small document from an alphabet of blocks. Two table
+// blocks landing next to each other merge into one unit, which is exactly the
+// case worth generating: a unit is not always a block.
+func randomMarkdown(rng *rand.Rand, maxBlocks int) string {
+	alphabet := []string{
+		"# Heading\n",
+		"## Other heading\n",
+		"A paragraph of prose.\n",
+		"Another paragraph, this one with [a link](http://example.com) in it.\n",
+		"- item one\n- item two\n",
+		"> a quotation\n",
+		"```\ncode line\n```\n",
+		"| x | y |\n|---|---|\n| 1 | 2 |\n",
+		"---\n",
+	}
+
+	var sb strings.Builder
+	for range rng.Intn(maxBlocks + 1) {
+		sb.WriteString(alphabet[rng.Intn(len(alphabet))])
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// checkUnits is the block-level counterpart of checkComplete: every unit of
+// both sides appears exactly once, in order. It cannot reuse checkRows, whose
+// numbers are positions in a file; a unit's number is the source line it
+// starts on, so the numbers ascend without being consecutive.
+func checkUnits(t *testing.T, ua, ub []unit, d Document) {
+	t.Helper()
+
+	left, right := 0, 0
+	check := func(row int, side string, line Line, want []unit, at int) {
+		if at >= len(want) {
+			t.Fatalf("row %d: a %s side beyond the %d units of that document", row, side, len(want))
+		}
+		if line.Number != want[at].number || line.Text != want[at].text {
+			t.Fatalf("row %d: %s = %q@%d, want unit %d, %q@%d",
+				row, side, line.Text, line.Number, at, want[at].text, want[at].number)
+		}
+	}
+
+	for i, r := range flatten(d.Rows) {
+		if r.Left.Present() {
+			check(i, "left", r.Left, ua, left)
+			left++
+		}
+		if r.Right.Present() {
+			check(i, "right", r.Right, ub, right)
+			right++
+		}
+	}
+	if left != len(ua) || right != len(ub) {
+		t.Fatalf("document covers %d/%d left and %d/%d right units",
+			left, len(ua), right, len(ub))
+	}
+}
+
+// The line path's round-trip property, on the Markdown path: folding hides
+// units, it never loses or reorders them, and expanding gives back exactly the
+// alignment that never folding produces.
+func TestBuildMarkdownRandomKeepsEveryUnit(t *testing.T) {
+	rng := rand.New(rand.NewSource(11))
+
+	for range 300 {
+		a, b := randomMarkdown(rng, 8), randomMarkdown(rng, 8)
+		parsedA, parsedB := md.Parse([]byte(a)), md.Parse([]byte(b))
+		ua, ub := newUnits(parsedA), newUnits(parsedB)
+
+		unfolded := BuildMarkdown(parsedA, parsedB, Options{Context: -1, WordDiff: true})
+		checkUnits(t, ua, ub, unfolded)
+
+		for _, context := range []int{0, 1, DefaultContext} {
+			doc := BuildMarkdown(parsedA, parsedB, Options{Context: context, WordDiff: true})
+			checkUnits(t, ua, ub, doc)
+
+			if got, want := summarise(flatten(doc.Rows)), summarise(unfolded.Rows); got != want {
+				t.Fatalf("context %d changed the alignment:\ngot:\n%swant:\n%s", context, got, want)
+			}
+		}
 	}
 }
 

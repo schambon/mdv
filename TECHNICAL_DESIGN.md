@@ -362,7 +362,7 @@ The repository's Go tests cover:
 - terminal event decoding, escape-sequence handling, and size normalization;
 - command-line parsing, validation, and exit codes, including the diff form and its flags;
 - the diff algorithm, through randomised round-trip tests asserting the edit script rebuilds the second input, adjacent edits never share an operation, and the Myers paper's worked example costs its known 5 edits;
-- diff alignment, through randomised tests asserting every line of both files appears exactly once and that folding reproduces the unfolded alignment when flattened;
+- diff alignment, through randomised tests asserting every unit of both sides appears exactly once and that folding reproduces the unfolded alignment when flattened — run over both paths, on random line sequences and on random documents built from an alphabet of Markdown blocks;
 - diff layout: no row exceeding the width at any width or gutter setting, the divider landing on the same column of every row, preserved indentation, expanded tabs, and the rendered-line-to-row mapping staying in step;
 - diff viewer behaviour over fakes: folding, expansion, hunk navigation, the status summary, reload of both files, and search matches surviving a fold change;
 - Markdown-aware comparison: that rewrapping a corpus of paragraphs at several widths produces no hunks at all, that the line diff still would (so the first test means something), that a changed link target is a difference, that every unit appears exactly once, and that unchanged units render full width while split ones stay aligned;
