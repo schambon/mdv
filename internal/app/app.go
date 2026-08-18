@@ -584,14 +584,16 @@ func (a *App) draw() error {
 		if len(line.Spans) > 0 {
 			sb.WriteString(a.styler.Line(line))
 		}
-		sb.WriteString(terminal.ClearToEOL)
-		// OPOST is off, so line endings must be written explicitly.
+		// The ClearScreen above already blanked every cell, so no per-row
+		// erase is needed. Emitting one here would be worse than redundant: a
+		// row that fills the final column leaves the cursor in a deferred-wrap
+		// state, and \x1b[K there erases the last glyph — dropping the final
+		// character of a full-width line. OPOST is off, so the CRLF is explicit.
 		sb.WriteString("\r\n")
 	}
 
 	status, _ := clipCells(a.status(), a.size.Width)
 	sb.WriteString(a.styler.Apply(status, layout.StyleStatus))
-	sb.WriteString(terminal.ClearToEOL)
 
 	return a.term.Draw(sb.String())
 }

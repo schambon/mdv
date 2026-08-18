@@ -208,6 +208,42 @@ func TestFrameFillsUnusedRows(t *testing.T) {
 	}
 }
 
+// A row that fills the terminal to its final column must reach the screen
+// whole. The per-row erase that used to follow the content erased that last
+// column, dropping the final character of a full-width line.
+func TestFullWidthRowKeepsItsLastColumn(t *testing.T) {
+	term := newFake()
+	term.size = terminal.Size{Width: 30, Height: 12}
+	// A fenced code line longer than the content width hard-splits into rows of
+	// exactly the terminal width.
+	a := newApp(t, "```\n"+strings.Repeat("x", 80)+"\n```\n", term)
+	a.draw()
+	frame := term.lastFrame()
+
+	full := ""
+	for _, line := range a.rendered.Lines {
+		cells := 0
+		for _, s := range line.Spans {
+			cells += s.Cells
+		}
+		if cells == a.size.Width {
+			full = line.SearchText
+			break
+		}
+	}
+	if full == "" {
+		t.Fatal("no full-width row was produced; test no longer exercises the bug")
+	}
+	// Colour is off, so the row's text reaches the frame verbatim. It must be
+	// terminated by CRLF, never by an erase that would clear its final column.
+	if !strings.Contains(frame, full+"\r\n") {
+		t.Errorf("full-width row %q not emitted intact before CRLF", full)
+	}
+	if strings.Contains(frame, full+terminal.ClearToEOL) {
+		t.Errorf("full-width row %q is followed by ClearToEOL, which erases its last column", full)
+	}
+}
+
 func TestStatusRowIsClippedToWidth(t *testing.T) {
 	term := newFake()
 	term.size = terminal.Size{Width: 20, Height: 6}
