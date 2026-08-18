@@ -188,3 +188,95 @@ func TestNewRejectsNonTerminal(t *testing.T) {
 		t.Errorf("error = %v", err)
 	}
 }
+
+func TestParseBackgroundReply(t *testing.T) {
+	tests := []struct {
+		name     string
+		reply    string
+		wantDark bool
+		wantOK   bool
+	}{
+		{"black rgb 16-bit", "\x1b]11;rgb:0000/0000/0000", true, true},
+		{"white rgb 16-bit", "\x1b]11;rgb:ffff/ffff/ffff", false, true},
+		{"black rgb 8-bit", "]11;rgb:00/00/00", true, true},
+		{"white rgb 8-bit", "]11;rgb:ff/ff/ff", false, true},
+		{"dark grey", "rgb:2020/2020/2020", true, true},
+		{"light grey", "rgb:d0d0/d0d0/d0d0", false, true},
+		{"hash form six digits white", "\x1b]11;#ffffff", false, true},
+		{"hash form six digits black", "\x1b]11;#000000", true, true},
+		{"trailing terminator bytes tolerated", "rgb:ffff/ffff/ffff\x1b", false, true},
+		{"no colour in reply", "\x1b]11;", false, false},
+		{"garbage", "not a reply", false, false},
+		{"too few channels", "rgb:ffff/ffff", false, false},
+		{"non-hex channel", "rgb:zz/00/00", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dark, ok := parseBackgroundReply(tt.reply)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && dark != tt.wantDark {
+				t.Errorf("dark = %v, want %v", dark, tt.wantDark)
+			}
+		})
+	}
+}
+
+func TestLeadingHex(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"ffff", "ffff"},
+		{"ab/cd", "ab"},
+		{"00\x1b", "00"},
+		{"zzz", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := leadingHex(tt.in); got != tt.want {
+			t.Errorf("leadingHex(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestReadOSCReplyDrainsBufferedReply reproduces the startup bug where bufio
+// pulled the whole OSC 11 reply off the fd in one read, after which a raw
+// select on the fd looked empty and the reply was abandoned half-parsed, its
+// tail leaking into the input stream. The read must consume the whole reply up
+// to the terminator and leave everything after it untouched.
+func TestReadOSCReplyDrainsBufferedReply(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	// The write end stays open for the whole test: a closed pipe reports EOF as
+	// readable, which would hide the very bug this guards — a real tty does not
+	// hit EOF, so once bufio has drained the fd a select on it sees nothing.
+	defer w.Close()
+
+	// A light background, terminated by ST, with a stray keystroke behind it.
+	const reply = "\x1b]11;rgb:e9e9/e9e9/ecec\x1b\\j"
+	if _, err := w.WriteString(reply); err != nil {
+		t.Fatal(err)
+	}
+
+	term := &darwinTerminal{in: r, reader: bufio.NewReader(r)}
+
+	got, ok := term.readOSCReply(queryTimeout)
+	if !ok {
+		t.Fatal("readOSCReply reported no reply")
+	}
+	if !strings.Contains(got, "rgb:e9e9/e9e9/ecec") {
+		t.Errorf("reply = %q, want the whole rgb triplet", got)
+	}
+	if dark, ok := parseBackgroundReply(got); !ok || dark {
+		t.Errorf("parse = (dark=%v ok=%v), want a light verdict", dark, ok)
+	}
+
+	// The byte after the terminator must not have been swallowed: it is a real
+	// keystroke the pump will read next.
+	b, err := term.reader.ReadByte()
+	if err != nil || b != 'j' {
+		t.Errorf("leftover byte = %q (err %v), want 'j': the read overran the terminator", b, err)
+	}
+}

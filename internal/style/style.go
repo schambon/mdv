@@ -89,11 +89,13 @@ type Styler struct {
 
 // New resolves a theme name and returns a Styler. Colour may be disabled
 // independently of the theme; hyperlinks are emitted either way, since a link
-// is still useful on a monochrome terminal.
+// is still useful on a monochrome terminal. An auto theme is resolved from the
+// environment alone; callers with a live terminal should resolve it through
+// Detect first and pass the concrete result here.
 func New(theme Theme, enabled bool) Styler {
 	resolved := theme
 	if theme == ThemeAuto {
-		resolved = detect()
+		resolved = Detect(nil)
 	}
 	p := darkPalette
 	if resolved == ThemeLight {
@@ -105,10 +107,27 @@ func New(theme Theme, enabled bool) Styler {
 // Theme reports the resolved theme, with auto already decided.
 func (s Styler) Theme() Theme { return s.theme }
 
-// detect infers the background from COLORFGBG, which terminals set as
+// Detect resolves an auto theme to a concrete one. It first asks the terminal
+// through query, an OSC 11 background probe, and falls back to COLORFGBG when
+// the terminal does not answer. query may be nil, which skips the probe — the
+// path taken when there is no terminal to ask. Dark is the floor throughout,
+// since it is the safer default for an unknown background.
+func Detect(query func() (dark bool, ok bool)) Theme {
+	if query != nil {
+		if dark, ok := query(); ok {
+			if dark {
+				return ThemeDark
+			}
+			return ThemeLight
+		}
+	}
+	return detectEnv()
+}
+
+// detectEnv infers the background from COLORFGBG, which terminals set as
 // "foreground;background" with an ANSI colour index. Dark backgrounds are the
 // safer default when the variable is absent or unparseable.
-func detect() Theme {
+func detectEnv() Theme {
 	value, ok := os.LookupEnv("COLORFGBG")
 	if !ok {
 		return ThemeDark

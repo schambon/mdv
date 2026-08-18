@@ -62,6 +62,7 @@ Implemented keys:
 | `/`, `?` | Enter forward or backward search |
 | `n`, `N` | Repeat the last search in the same or opposite direction |
 | `l` | Show or hide the line-number gutter |
+| `t` | Switch between the dark and light theme |
 | `v` | Edit the source at the current mapped line |
 | `r`, `Ctrl-R` | Reload the source |
 | `h` | Show a one-line key summary |
@@ -99,7 +100,7 @@ Tables share column widths across adjacent table rows. Width is measured from vi
 
 Cell width treats combining marks, enclosing marks, variation selectors, and zero-width joiners as zero-width. A fixed set of East Asian and emoji ranges is treated as double-width; other runes are single-width. This is rune-based, not full grapheme-cluster layout.
 
-`dark` and `light` are distinct palettes: the light theme substitutes darker foregrounds so text stays legible against a light background. `auto` reads `COLORFGBG`, whose last field is the background colour index: 0-6 and 8 select `dark`, other values select `light`, and an absent or unparseable variable defaults to `dark`. Styling uses 256-colour sequences for code and inline code, plus standard bold, italic, strike, underline, and reverse-video sequences. `--no-color` disables these SGR sequences but deliberately does not disable OSC 8 hyperlinks, which remain useful on a monochrome terminal.
+`dark` and `light` are distinct palettes: the light theme substitutes darker foregrounds so text stays legible against a light background. `auto` asks the terminal for its background colour with an OSC 11 query once the screen has been entered, timing the reply out after a tenth of a second; the luminance of the reported colour selects `dark` below the midpoint and `light` above it. A terminal that does not answer falls back to `COLORFGBG`, whose last field is the background colour index: 0-6 and 8 select `dark`, other values select `light`. An absent or unparseable variable defaults to `dark`, which is the floor throughout. The theme can also be switched at runtime with `t`, which flips between the two palettes; because styling is applied when a frame is drawn, this repaints without relaying out the document, and it is a no-op under `--no-color`. Styling uses 256-colour sequences for code and inline code, plus standard bold, italic, strike, underline, and reverse-video sequences. `--no-color` disables these SGR sequences but deliberately does not disable OSC 8 hyperlinks, which remain useful on a monochrome terminal.
 
 ## 6. Links
 
@@ -182,7 +183,7 @@ Keys added in diff mode:
 | `z` | Collapse unchanged context again |
 | `>`, `<`, `→`, `←` | Move to the next or previous changed file (git mode, §9.2) |
 
-`l` also works here, toggling both panes' gutters at once.
+`l` also works here, toggling both panes' gutters at once, and `t` switches the theme.
 
 A run of adjacent changed rows is one hunk. Hunk navigation does not wrap; it reports when there is nothing further in that direction. Expanding a fold below the top of the view leaves the view where it is. `h` shows the diff key summary instead of the viewer's.
 

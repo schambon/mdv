@@ -14,9 +14,9 @@ const (
 	ctrlR = 0x12
 )
 
-const keyHelp = "j/k move  space/b page  g/G ends  / ? search  n/N next  l numbers  v edit  r reload  q quit"
+const keyHelp = "j/k move  space/b page  g/G ends  / ? search  n/N next  l numbers  t theme  v edit  r reload  q quit"
 
-const diffKeyHelp = "j/k move  space/b page  [ ] hunk  x/X expand  z collapse  l numbers  / search  v edit  q quit"
+const diffKeyHelp = "j/k move  space/b page  [ ] hunk  x/X expand  z collapse  l numbers  t theme  / search  v edit  q quit"
 
 // fileKeyHelp is added only when git mode found more than one changed file,
 // since the keys do nothing otherwise.
@@ -97,6 +97,8 @@ func (a *App) handleRune(r rune) (bool, error) {
 		a.message = a.help()
 	case 'l':
 		a.toggleLineNumbers()
+	case 't':
+		a.toggleTheme()
 	case 'r', ctrlR:
 		if err := a.reload(); err != nil {
 			a.message = err.Error()

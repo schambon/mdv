@@ -104,6 +104,31 @@ func TestAutoResolvesFromCOLORFGBG(t *testing.T) {
 	}
 }
 
+func TestDetectPrefersTerminalOverEnvironment(t *testing.T) {
+	t.Setenv("COLORFGBG", "15;0") // a dark background in the environment
+
+	if got := Detect(func() (bool, bool) { return false, true }); got != ThemeLight {
+		t.Errorf("terminal reported light, got %q", got)
+	}
+	if got := Detect(func() (bool, bool) { return true, true }); got != ThemeDark {
+		t.Errorf("terminal reported dark, got %q", got)
+	}
+}
+
+func TestDetectFallsBackToEnvironmentWhenTerminalSilent(t *testing.T) {
+	t.Setenv("COLORFGBG", "0;15") // a light background
+	if got := Detect(func() (bool, bool) { return true, false }); got != ThemeLight {
+		t.Errorf("silent terminal should fall through to COLORFGBG, got %q", got)
+	}
+}
+
+func TestDetectNilQuerySkipsProbe(t *testing.T) {
+	t.Setenv("COLORFGBG", "0;15")
+	if got := Detect(nil); got != ThemeLight {
+		t.Errorf("nil query should use COLORFGBG, got %q", got)
+	}
+}
+
 func TestExplicitThemesIgnoreCOLORFGBG(t *testing.T) {
 	t.Setenv("COLORFGBG", "0;15") // a light background
 	if got := New(ThemeDark, true).Theme(); got != ThemeDark {

@@ -44,6 +44,12 @@ type Terminal interface {
 	Leave() error
 	// Size reports the current dimensions.
 	Size() (Size, error)
+	// QueryBackground asks the terminal for its background colour via OSC 11
+	// and reports whether that colour is dark. ok is false when the terminal
+	// does not answer within a short timeout, so auto detection can fall back
+	// to another signal. It must be called in raw mode — after Enter — and
+	// before any ReadEvent, since it reads the reply off the same input.
+	QueryBackground() (dark bool, ok bool)
 	// ReadEvent blocks until one input event is available.
 	ReadEvent() (Event, error)
 	// Draw writes a complete frame in a single write.

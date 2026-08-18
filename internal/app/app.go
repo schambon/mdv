@@ -172,6 +172,12 @@ func run(cfg Config, term terminal.Terminal) error {
 	defer term.Leave()
 	defer a.recoverTerminal()
 
+	// An auto theme is resolved now, in raw mode but before the pump starts, so
+	// the OSC 11 reply is read here rather than being mistaken for a keystroke.
+	// The styler is only used at draw time, so re-resolving after the initial
+	// render costs nothing.
+	a.resolveTheme()
+
 	return a.loop()
 }
 
@@ -383,6 +389,35 @@ func (a *App) refreshMatches() {
 // rather than merely redrawn.
 func (a *App) toggleLineNumbers() {
 	a.reflow(func() { a.cfg.LineNumbers = !a.cfg.LineNumbers })
+}
+
+// resolveTheme decides an auto theme against the live terminal. A concrete
+// theme was already resolved from the environment when the styler was built, so
+// this only re-resolves when the user asked for auto; the OSC 11 probe replaces
+// that guess with what the terminal actually reports.
+func (a *App) resolveTheme() {
+	if a.cfg.Theme != style.ThemeAuto {
+		return
+	}
+	resolved := style.Detect(a.term.QueryBackground)
+	a.styler = style.New(resolved, a.cfg.Color)
+}
+
+// toggleTheme flips between the dark and light palettes at runtime. Styling is
+// applied when a frame is drawn, so swapping the styler is enough — the next
+// draw repaints with no relayout. With colour off the swap would be invisible,
+// so it reports that instead of pretending to have done something.
+func (a *App) toggleTheme() {
+	if !a.cfg.Color {
+		a.message = "colour is off"
+		return
+	}
+	next := style.ThemeLight
+	if a.styler.Theme() == style.ThemeLight {
+		next = style.ThemeDark
+	}
+	a.styler = style.New(next, a.cfg.Color)
+	a.message = "theme: " + string(next)
 }
 
 // reload re-reads the file from disk, keeping the viewport near the same

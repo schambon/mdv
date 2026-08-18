@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -96,6 +98,135 @@ func (t *darwinTerminal) Leave() error {
 	_, writeErr := t.out.WriteString(ResetSGR + ShowCursor + LeaveAltScreen)
 	modeErr := setTermios(t.in.Fd(), t.saved)
 	return errors.Join(writeErr, modeErr)
+}
+
+// oscQueryBackground asks the terminal to report its background colour. A
+// terminal that understands it replies with the same 11; prefix; one that does
+// not stays silent, which the read below handles by timing out.
+const oscQueryBackground = "\x1b]11;?\x07"
+
+// queryTimeout bounds the wait for a reply, so a terminal that does not answer
+// OSC 11 costs a short pause at startup rather than hanging the viewer.
+const queryTimeout = 100 * time.Millisecond
+
+// QueryBackground sends OSC 11 and parses the reply into a dark/light verdict.
+// It must run in raw mode and before the input pump starts, so its reply cannot
+// be mistaken for — or stolen by — a keypress.
+func (t *darwinTerminal) QueryBackground() (bool, bool) {
+	t.mu.Lock()
+	entered := t.entered
+	t.mu.Unlock()
+	if !entered {
+		return false, false
+	}
+
+	if _, err := t.out.WriteString(oscQueryBackground); err != nil {
+		return false, false
+	}
+
+	resp, ok := t.readOSCReply(queryTimeout)
+	if !ok {
+		return false, false
+	}
+	return parseBackgroundReply(resp)
+}
+
+// readOSCReply reads bytes until an OSC terminator (BEL, or ESC \) or the
+// deadline, whichever comes first. It polls readable before each byte so a
+// silent terminal never blocks the read.
+func (t *darwinTerminal) readOSCReply(timeout time.Duration) (string, bool) {
+	deadline := time.Now().Add(timeout)
+	var buf []byte
+	for len(buf) < 64 {
+		// The first ReadByte drains the whole reply from the fd into bufio's
+		// buffer, so consult the buffer before select: checking the fd alone
+		// would look empty and abandon the rest of a reply already in hand.
+		if t.reader.Buffered() == 0 {
+			remaining := time.Until(deadline)
+			if remaining <= 0 || !readable(t.in.Fd(), remaining) {
+				return "", false
+			}
+		}
+		b, err := t.reader.ReadByte()
+		if err != nil {
+			return "", false
+		}
+		switch {
+		case b == 0x07: // BEL terminates an OSC string
+			return string(buf), true
+		case b == '\\' && len(buf) > 0 && buf[len(buf)-1] == 0x1b: // ST is ESC \
+			return string(buf[:len(buf)-1]), true
+		default:
+			buf = append(buf, b)
+		}
+	}
+	return string(buf), true
+}
+
+// parseBackgroundReply extracts the RGB triplet from an OSC 11 reply and reports
+// whether it is dark. Both the xterm "rgb:RRRR/GGGG/BBBB" form and the shorter
+// "#RRGGBB" form are accepted; channels may be one to four hex digits.
+func parseBackgroundReply(reply string) (dark bool, ok bool) {
+	var r, g, b float64
+	switch {
+	case strings.Contains(reply, "rgb:"):
+		parts := strings.SplitN(reply[strings.Index(reply, "rgb:")+4:], "/", 3)
+		if len(parts) != 3 {
+			return false, false
+		}
+		var ok1, ok2, ok3 bool
+		r, ok1 = parseHexChannel(parts[0])
+		g, ok2 = parseHexChannel(parts[1])
+		b, ok3 = parseHexChannel(parts[2])
+		if !ok1 || !ok2 || !ok3 {
+			return false, false
+		}
+	case strings.Contains(reply, "#"):
+		hex := leadingHex(reply[strings.IndexByte(reply, '#')+1:])
+		if len(hex)%3 != 0 || len(hex) == 0 {
+			return false, false
+		}
+		w := len(hex) / 3
+		var ok1, ok2, ok3 bool
+		r, ok1 = parseHexChannel(hex[:w])
+		g, ok2 = parseHexChannel(hex[w : 2*w])
+		b, ok3 = parseHexChannel(hex[2*w:])
+		if !ok1 || !ok2 || !ok3 {
+			return false, false
+		}
+	default:
+		return false, false
+	}
+
+	// Rec. 601 luma on channels normalised to 0..1; below the midpoint is dark.
+	return 0.299*r+0.587*g+0.114*b < 0.5, true
+}
+
+// parseHexChannel reads the leading hex digits of a channel and scales them to
+// 0..1 against their own width, so "ff", "ffff" and "f" all map to 1.
+func parseHexChannel(s string) (float64, bool) {
+	hex := leadingHex(s)
+	if hex == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(hex, 16, 64)
+	if err != nil {
+		return 0, false
+	}
+	max := float64(uint64(1)<<(uint(len(hex))*4) - 1)
+	return float64(v) / max, true
+}
+
+// leadingHex returns the run of hex digits at the start of s, dropping any
+// trailing terminator bytes the reply may still carry.
+func leadingHex(s string) string {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 func (t *darwinTerminal) Size() (Size, error) {

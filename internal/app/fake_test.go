@@ -31,6 +31,13 @@ type fakeTerminal struct {
 	sizeErr error
 	drawErr error
 
+	// bgDark and bgOK stand in for an OSC 11 background probe: bgOK reports
+	// whether the terminal answered, bgDark what it answered. queries counts
+	// the probes, so a test can assert an explicit theme never asks.
+	bgDark  bool
+	bgOK    bool
+	queries int
+
 	// idle unblocks a read that has run out of canned events. A real terminal
 	// blocks waiting for a keypress, so the fake must too: returning an error
 	// would end the event loop and hide whatever the test meant to exercise.
@@ -68,6 +75,13 @@ func (f *fakeTerminal) Leave() error {
 	defer f.mu.Unlock()
 	f.left++
 	return nil
+}
+
+func (f *fakeTerminal) QueryBackground() (bool, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queries++
+	return f.bgDark, f.bgOK
 }
 
 func (f *fakeTerminal) Size() (terminal.Size, error) {
