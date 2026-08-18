@@ -143,6 +143,72 @@ func TestListPrefixesIncludingTasks(t *testing.T) {
 	}
 }
 
+// A soft-wrapped list item reflows: continuation lines join the item body with
+// a single space rather than falling out as a separate flush-left paragraph.
+func TestListReflowsWrappedContinuation(t *testing.T) {
+	d := parse(t, "- first item\n  wrapped continuation\n  more\n- second item\n")
+	if len(d.Blocks) != 2 {
+		t.Fatalf("got %d blocks, want 2", len(d.Blocks))
+	}
+	if d.Blocks[0].Kind != doc.BlockListItem || d.Blocks[1].Kind != doc.BlockListItem {
+		t.Fatalf("kinds = %v, %v, want two list items", d.Blocks[0].Kind, d.Blocks[1].Kind)
+	}
+	if got := blockText(d.Blocks[0]); got != "first item wrapped continuation more" {
+		t.Errorf("first item text = %q", got)
+	}
+	if got := blockText(d.Blocks[1]); got != "second item" {
+		t.Errorf("second item text = %q", got)
+	}
+}
+
+// A blank line ends a wrapped item; a task prefix survives the gathering.
+func TestListWrapStopsAtBlankAndKeepsTask(t *testing.T) {
+	d := parse(t, "- [ ] todo\n  rest of todo\n\nafter\n")
+	b := d.Blocks[0]
+	if b.Kind != doc.BlockListItem || b.Prefix != "- [ ] " {
+		t.Errorf("item = %v %q, want list item %q", b.Kind, b.Prefix, "- [ ] ")
+	}
+	if got := blockText(b); got != "todo rest of todo" {
+		t.Errorf("text = %q", got)
+	}
+	last := d.Blocks[len(d.Blocks)-1]
+	if last.Kind != doc.BlockParagraph || blockText(last) != "after" {
+		t.Errorf("trailing block = %v %q, want paragraph %q", last.Kind, blockText(last), "after")
+	}
+}
+
+// special() constructs end a wrapped item instead of being folded into it.
+func TestListWrapStopsAtSpecialLines(t *testing.T) {
+	tests := []struct{ name, next string }{
+		{"heading", "# head\n"},
+		{"fence", "```\ncode\n```\n"},
+		{"rule", "---\n"},
+		{"quote", "> quote\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := parse(t, "- item text\n"+tt.next)
+			if got := blockText(d.Blocks[0]); got != "item text" {
+				t.Errorf("item text = %q, want %q", got, "item text")
+			}
+			if len(d.Blocks) < 2 {
+				t.Fatalf("special line was folded into the item")
+			}
+		})
+	}
+}
+
+// The block source range spans every line a wrapped item consumed.
+func TestListWrapSourceSpan(t *testing.T) {
+	b := parse(t, "- one\n  two\n  three\n").Blocks[0]
+	if b.Source.Start.Line != 1 {
+		t.Errorf("start line = %d, want 1", b.Source.Start.Line)
+	}
+	if b.Source.End.Line != 3 {
+		t.Errorf("end line = %d, want 3", b.Source.End.Line)
+	}
+}
+
 // An indented list item is a list, not indented code: the list check runs first.
 func TestIndentedListBeatsIndentedCode(t *testing.T) {
 	if got := parse(t, "    - item\n").Blocks[0].Kind; got != doc.BlockListItem {

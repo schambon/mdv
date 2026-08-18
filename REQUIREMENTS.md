@@ -80,7 +80,7 @@ The block parser implements:
 - fenced code opened by a trimmed line beginning with three backticks or tildes and closed by a trimmed line beginning with the same three-character marker;
 - consecutive four-space-indented code lines;
 - single-line block quotes whose first non-space character is `>`;
-- single-line unordered list items using `-`, `+`, or `*` and ordered items using digits followed by `.` or `)`;
+- unordered list items using `-`, `+`, or `*` and ordered items using digits followed by `.` or `)`; a soft-wrapped item's continuation lines reflow into it, ending at a blank line or the next block-level construct, the same way a paragraph gathers its lines;
 - task markers `[ ]` and case-insensitive `[x]` immediately after a list marker;
 - pipe tables identified by a header containing `|` followed by a delimiter row whose cells contain at least three hyphens, with optional colons.
 

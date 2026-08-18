@@ -238,9 +238,13 @@ func (p *parser) quote() bool {
 	return true
 }
 
-// list matches a single-line item. A task marker immediately after the list
-// marker is folded into the displayed prefix rather than kept as body text.
+// list matches a list item, gathering any soft-wrapped continuation lines the
+// way paragraph does: subsequent lines that are neither blank nor a construct
+// special recognizes (a new item, heading, fence, rule, or quote) belong to the
+// item and are reflowed with it. A task marker immediately after the list marker
+// is folded into the displayed prefix rather than kept as body text.
 func (p *parser) list() bool {
+	start := p.i
 	m := listPattern.FindStringSubmatch(p.lines[p.i].text)
 	if m == nil {
 		return false
@@ -255,13 +259,24 @@ func (p *parser) list() bool {
 		consumed += len(body) - len(rest)
 		body = rest
 	}
+	bodyOffset := p.lines[start].start + consumed
+
+	parts := []string{body}
+	p.i++
+	for p.i < len(p.lines) {
+		text := p.lines[p.i].text
+		if strings.TrimSpace(text) == "" || special(text) {
+			break
+		}
+		parts = append(parts, strings.TrimSpace(text))
+		p.i++
+	}
 
 	p.emit(doc.Block{
 		Kind:    doc.BlockListItem,
 		Prefix:  prefix,
-		Inlines: p.inlines(body, p.lines[p.i].start+consumed),
-	}, p.i, p.i+1)
-	p.i++
+		Inlines: p.inlines(strings.Join(parts, " "), bodyOffset),
+	}, start, p.i)
 	return true
 }
 
