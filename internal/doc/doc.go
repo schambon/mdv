@@ -66,7 +66,8 @@ const (
 
 // Block is one block-level construct. Level carries the heading depth, Prefix
 // the display prefix a renderer should repeat (quote bar, list marker), and
-// Header marks a table row as its table's header.
+// Header marks a table row as its table's header. Lang carries the info string
+// of a fenced code block, lowercased, and is empty for every other kind.
 type Block struct {
 	Kind    BlockKind
 	Inlines []Inline
@@ -74,6 +75,7 @@ type Block struct {
 	Level   int
 	Prefix  string
 	Header  bool
+	Lang    string
 }
 
 // Document is a parsed source file. Lines holds the byte offset at which each

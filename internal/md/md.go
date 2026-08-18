@@ -120,12 +120,15 @@ func (p *parser) blank() bool {
 }
 
 // fencedCode consumes a ``` or ~~~ fence. Only the first three characters of
-// the opener select the closing marker, and the language label is ignored.
+// the opener select the closing marker; the rest of the opener is the info
+// string, whose first word is kept as the language for syntax highlighting.
 func (p *parser) fencedCode() bool {
 	marker, ok := fenceMarker(p.lines[p.i].text)
 	if !ok {
 		return false
 	}
+
+	lang := fenceLang(p.lines[p.i].text)
 
 	start := p.i
 	p.i++
@@ -149,8 +152,21 @@ func (p *parser) fencedCode() bool {
 	p.emit(doc.Block{
 		Kind:    doc.BlockCode,
 		Inlines: p.text(strings.Join(body, "\n"), contentStart, contentEnd),
+		Lang:    lang,
 	}, start, p.i)
 	return true
+}
+
+// fenceLang extracts the language from a fence opener: the first whitespace-
+// separated word after the marker, trimmed and lowercased. An indented fence,
+// a bare fence, or a tilde fence with no info string yields "".
+func fenceLang(text string) string {
+	trimmed := strings.TrimSpace(text)
+	info := strings.TrimSpace(trimmed[3:])
+	if info == "" {
+		return ""
+	}
+	return strings.ToLower(strings.Fields(info)[0])
 }
 
 func fenceMarker(text string) (string, bool) {

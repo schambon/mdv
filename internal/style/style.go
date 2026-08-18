@@ -34,6 +34,10 @@ var darkPalette = palette{
 	layout.StyleStrong:       "1",    // bold
 	layout.StyleStrike:       "9",    // crossed out
 	layout.StyleCode:         "38;5;250",
+	layout.StyleCodeKeyword:  "38;5;110", // soft blue
+	layout.StyleCodeString:   "38;5;114", // green
+	layout.StyleCodeComment:  "38;5;244", // dim grey
+	layout.StyleCodeNumber:   "38;5;215", // orange
 	layout.StyleInlineCode:   "38;5;211", // pink
 	layout.StyleQuote:        "38;5;245",
 	layout.StyleRule:         "38;5;240",
@@ -63,6 +67,10 @@ var lightPalette = palette{
 	layout.StyleStrong:       "1",
 	layout.StyleStrike:       "9",
 	layout.StyleCode:         "38;5;238",
+	layout.StyleCodeKeyword:  "38;5;25",  // blue
+	layout.StyleCodeString:   "38;5;28",  // green
+	layout.StyleCodeComment:  "38;5;245", // grey
+	layout.StyleCodeNumber:   "38;5;130", // orange-brown
 	layout.StyleInlineCode:   "38;5;162", // deep pink
 	layout.StyleQuote:        "38;5;242",
 	layout.StyleRule:         "38;5;250",

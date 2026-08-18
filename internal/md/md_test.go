@@ -380,6 +380,30 @@ func TestParseEmptyInput(t *testing.T) {
 	}
 }
 
+func TestFenceLanguage(t *testing.T) {
+	tests := []struct {
+		name, src, want string
+	}{
+		{"plain word", "```go\ncode\n```\n", "go"},
+		{"lowercased", "```Python\nx\n```\n", "python"},
+		{"first word of info string", "```js  {.line-numbers}\nx\n```\n", "js"},
+		{"tilde fence", "~~~rust\nx\n~~~\n", "rust"},
+		{"bare fence", "```\ncode\n```\n", ""},
+		{"tilde bare fence", "~~~\ncode\n~~~\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := parse(t, tt.src)
+			if d.Blocks[0].Kind != doc.BlockCode {
+				t.Fatalf("first block kind = %v, want code", d.Blocks[0].Kind)
+			}
+			if got := d.Blocks[0].Lang; got != tt.want {
+				t.Errorf("Lang = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseNoTrailingNewline(t *testing.T) {
 	d := parse(t, "one\ntwo")
 	if len(d.Blocks) != 1 {

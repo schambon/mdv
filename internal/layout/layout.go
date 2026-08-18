@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/schambon/mdv/internal/doc"
+	"github.com/schambon/mdv/internal/highlight"
 )
 
 // Style names the visual role of a span.
@@ -21,6 +22,12 @@ const (
 	StyleStrong
 	StyleStrike
 	StyleCode
+	// Syntax-highlighting styles for fenced code. Plain code keeps StyleCode;
+	// these colour the tokens a language lexer picks out within it.
+	StyleCodeKeyword
+	StyleCodeString
+	StyleCodeComment
+	StyleCodeNumber
 	StyleInlineCode
 	StyleQuote
 	StyleRule
@@ -175,23 +182,56 @@ func (r *renderer) emitPlain(text string, style Style, b doc.Block, first bool) 
 
 // code expands a code block into one row per physical line, each keeping the
 // block's source range. Code rows are indented four spaces and never reflowed.
+// When the fence names a language, each line is split into highlighted token
+// runs; an unknown language leaves every token Plain, so the output is a single
+// StyleCode run exactly as before.
 func (r *renderer) code(b doc.Block) {
 	var text string
 	if len(b.Inlines) > 0 {
 		text = b.Inlines[0].Text
 	}
-	for i, physical := range strings.Split(text, "\n") {
-		row := "    " + physical
-		for _, chunk := range hardSplit(row, r.contentWidth()) {
-			line := r.newRow(b, i == 0)
-			r.appendSpan(&line, Span{
-				Text:   chunk,
-				Cells:  Width(chunk),
-				Style:  StyleCode,
-				Source: b.Source,
+	indent := run{text: "    ", cells: 4, style: StyleCode, source: b.Source}
+	for i, tokens := range highlight.Lines(b.Lang, text) {
+		runs := []run{indent}
+		for _, tok := range tokens {
+			runs = append(runs, run{
+				text:   tok.Text,
+				cells:  Width(tok.Text),
+				style:  codeStyle(tok.Kind),
+				source: b.Source,
 			})
+		}
+		// packRuns preserves every space and hard-splits an over-wide run,
+		// keeping the no-row-exceeds-width invariant without reflowing.
+		for _, rowRuns := range packRuns(runs, r.contentWidth()) {
+			line := r.newRow(b, i == 0)
+			for _, rn := range rowRuns {
+				r.appendSpan(&line, Span{
+					Text:   rn.text,
+					Cells:  rn.cells,
+					Style:  rn.style,
+					Source: rn.source,
+				})
+			}
 			r.lines = append(r.lines, line)
 		}
+	}
+}
+
+// codeStyle maps a highlighter token kind onto a layout style. Plain tokens
+// keep the base StyleCode, so unrecognised languages render unchanged.
+func codeStyle(kind highlight.TokenKind) Style {
+	switch kind {
+	case highlight.Keyword:
+		return StyleCodeKeyword
+	case highlight.String:
+		return StyleCodeString
+	case highlight.Comment:
+		return StyleCodeComment
+	case highlight.Number:
+		return StyleCodeNumber
+	default:
+		return StyleCode
 	}
 }
 
