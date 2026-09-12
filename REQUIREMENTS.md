@@ -82,7 +82,10 @@ The block parser implements:
 - single-line block quotes whose first non-space character is `>`;
 - unordered list items using `-`, `+`, or `*` and ordered items using digits followed by `.` or `)`; a soft-wrapped item's continuation lines reflow into it, ending at a blank line or the next block-level construct, the same way a paragraph gathers its lines;
 - task markers `[ ]` and case-insensitive `[x]` immediately after a list marker;
-- pipe tables identified by a header containing `|` followed by a delimiter row whose cells contain at least three hyphens, with optional colons.
+- pipe tables identified by a header containing `|` followed by a delimiter row whose cells contain at least three hyphens, with optional colons;
+- YAML frontmatter: a `---` line at the very top of the file, its lines, and a closing `---` or `...`.
+
+Frontmatter is recognised only at line one, and only when it is closed: an unterminated `---` opener is not frontmatter at all, and its lines go back to the ordinary grammar as a horizontal rule followed by a paragraph. Nothing parses YAML. A frontmatter line is split at its first key colon — a colon followed by a space or a tab, or ending the line — with leading indentation kept on the key so nesting survives; the value is literal text, so an asterisk in a value is an asterisk. A line with no key colon, such as a nested list item or a wrapped value, is all value. Blank lines inside the block stay blank.
 
 Nested block structure is not modeled. A fence's info string is kept: its first word, lowercased, names the language used for the bounded syntax highlighting described below. Table alignment colons do not affect alignment. Escaped pipes and other complex table syntax are not supported.
 
@@ -95,6 +98,8 @@ Inline markup is parsed in paragraphs, headings, quotes, list bodies, and table 
 Content has two columns of left and right horizontal allowance. Text wraps at transitions between whitespace and non-whitespace runs. Continuation rows repeat the block prefix width as spaces. Code rows use four leading spaces; quote rows use `│ `; headings retain their `#` prefix; list markers are preserved.
 
 No rendered row ever exceeds the requested width. A run with no wrapping opportunity, such as a long URL or code line, is split across rows rather than allowed to overflow, and trailing whitespace is trimmed from a row broken after a space. An overflowing row would be wrapped by the terminal itself, displacing every row below it and corrupting the frame.
+
+Frontmatter lines share a key column across the adjacent run, the way table rows share column widths: keys are padded to the widest key so the values line up, and a value too long for what is left wraps with a hanging indent to the value column rather than back to the margin. If the widest key would leave the values fewer than eight cells, the key column is squeezed and over-long keys are clipped to it. A key with no value emits no padding, so the row carries no trailing whitespace. A line with no key renders under the value column, beneath the key it belongs to. The delimiter lines render as ordinary horizontal rules, which bracket the block. Keys carry their own style; values are unstyled, being the document's own data.
 
 Tables share column widths across adjacent table rows. Width is measured from visible inline text, excluding supported Markdown delimiters and link targets. If a table is too wide, its widest columns are reduced one cell at a time, but not below three cells; cell contents that still do not fit their column wrap onto further rows rather than being truncated, and a table row occupies as many physical rows as its tallest cell, with shorter cells padded blank beneath. A table with more columns than the row can hold even at that minimum is clipped at the row edge. Columns are separated with ` │ ` and the header is followed by a rule using `─` and `┼`, placed after all of the header's wrapped rows. Table headers are bold, and inline styles also apply inside cells.
 

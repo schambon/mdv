@@ -118,7 +118,7 @@ type Document struct {
 }
 ```
 
-Block kinds are blank, paragraph, heading, rule, code, quote, list item, and table row. Inline kinds are text, emphasis, strong, strike, inline code, link, and the synthetic table separator.
+Block kinds are blank, paragraph, heading, rule, code, quote, list item, table row, and meta. A meta block is one frontmatter line: its key is carried in `Prefix`, the way a quote carries its bar and a list its marker, and its value is a single literal inline. Keeping the key out of `Inlines` is what lets the markdown diff's word cut and `markInlines` treat a frontmatter value exactly like any other block's text — `Prefix` is already part of the alignment key, so a renamed key changes the unit and a changed value is word-marked within it. Inline kinds are text, emphasis, strong, strike, inline code, link, and the synthetic table separator.
 
 `Document.Position` binary-searches `Lines` to derive a one-based line and byte-based column from a byte offset, and the parser calls it for every range it records, so columns are real rather than placeholders. Offsets outside the document clamp to its first or last line.
 
@@ -128,10 +128,11 @@ Block kinds are blank, paragraph, heading, rule, code, quote, list item, and tab
 
 `md.Parse` converts the byte slice to a Go string, uses `strings.SplitAfter` on LF, removes LF and an optional preceding CR from each logical line, and records the original byte start. A final synthetic empty element caused by a trailing LF is removed.
 
-The block scanner is ordered. Blank lines, fences, rules, headings, quotes, lists, tables, and indented code are tested before the paragraph fallback. This ordering is part of the implemented syntax.
+The block scanner is ordered. Frontmatter, blank lines, fences, rules, headings, quotes, lists, tables, and indented code are tested before the paragraph fallback. This ordering is part of the implemented syntax.
 
 ### 5.2 Blocks
 
+- Frontmatter is checked first but fires only at `p.i == 0`, so it costs one comparison per document and cannot be triggered mid-file. The opener is exactly `---` (trailing blanks allowed); the scanner then looks ahead for a closing `---` or `...`. **Not finding one means this is not frontmatter**: the function returns false with `p.i` untouched, and the ordinary grammar takes the lines as a rule and a paragraph, so a document that genuinely opens with a horizontal rule is unharmed. The delimiter lines are emitted as `BlockRule`, which is both what they used to render as and what brackets the block on screen. `splitMeta` cuts each line at its first *key colon* — a colon followed by a space or tab, or ending the line — which is why `id: doc:kb-conventions` splits once and `http://example.com` not at all; leading indentation stays on the key so nesting is visible, and the value is emitted through `p.text`, unparsed, because a value is data.
 - A fence is any trimmed line beginning with ` ``` ` or `~~~`; only its first three characters select the closing marker. Content continues until a trimmed line begins with that marker or EOF. The opener and closer are omitted.
 - A rule contains only one of `-`, `*`, or `_` after spaces and tabs are removed and has length at least three.
 - An ATX heading begins at byte zero with one to six `#` bytes followed by one ASCII space. Leading indentation prevents heading recognition.
@@ -192,6 +193,12 @@ Adjacent semantic table rows form one sizing group. Each column's natural width 
 
 Each cell is reparsed as inline Markdown and wrapped to its assigned column width with the same `wrapRuns` used for block text; nothing is truncated. A logical table row occupies as many physical rows as its tallest cell, and shorter cells in that row pad the extra physical rows with blank space. Headers receive the base strong style, followed by a synthetic rule row placed after all of the header's physical rows. Inline kinds override the row's base style, so explicit emphasis, code, or links in a header use their inline styles. `clipSpans` remains the backstop for the case a row still cannot fit: a table with more columns than fit even at the per-column minimum is clipped at the row edge.
 
+### 6.1.1 Frontmatter
+
+Adjacent meta blocks form one sizing group, gathered in `Render` alongside the table group. The key column is the widest `Prefix` in the run, squeezed to leave `minMetaValueCells` for the values if it would not otherwise fit, with an over-long key clipped to it; `metaGap` separates the columns. Each value is wrapped with the same `wrapRuns` at the remaining width, and continuation rows write the column as blank space, giving a hanging indent to the value column instead of to the margin. The column padding is written only when a run follows it, so a key with no value leaves no trailing whitespace — `SearchText` is what search matches on, and a padded empty row would match a trailing-space query. `clipSpans` is the backstop here as it is for tables.
+
+In a Markdown diff each meta block is its own unit, so a changed `updated:` is one changed row rather than a repainted header. The key column is then sized per row rather than across the run, since a diff row is rendered on its own; the values of adjacent rows can sit at different columns, which is the cost of the per-line granularity and is worth it.
+
 ### 6.2 Width
 
 `CellWidth` returns zero for NUL, U+200D, U+FE00–U+FE0F, and Unicode Mn/Me categories. It returns two for the hard-coded East Asian, full-width, supplementary CJK, and U+1F300–U+1FAFF ranges. Everything else returns one. `Width` sums rune widths. There is no tab expansion or grapheme segmentation.
@@ -200,7 +207,7 @@ Each cell is reparsed as inline Markdown and wrapped to its assigned column widt
 
 A `Span` carries two styles: `Style` is what the text *is* (heading, link, code span) and `Background` is what has happened to it (added, removed, a changed word). Diffing Markdown needs both at once, since a changed heading is still a heading. `Styler.paint` emits them as a single SGR sequence — background parameters, then foreground, then one reset. They are not nested because `Apply` appends a reset that would clear the background mid-span, and the order is deliberate: a search hit's `30;43` carries its own background in the foreground slot, so putting the foreground last keeps a match visible on top of a diff band. `joinParams` skips empty parameter lists so `StyleNone` cannot produce a stray separator.
 
-Semantic layout styles map to fixed SGR sequences. Headings are bold cyan; emphasis italic; strong bold; strike crossed out; code gray; inline code pink; quotes and rules gray; links underlined blue; search matches use yellow backgrounds; status uses reverse video.
+Semantic layout styles map to fixed SGR sequences. Headings are bold cyan; emphasis italic; strong bold; strike crossed out; code gray; inline code pink; quotes and rules gray; frontmatter keys muted cyan, dimmer than a heading so the header reads as furniture rather than as content; links underlined blue; search matches use yellow backgrounds; status uses reverse video.
 
 `style.New` resolves the theme and stores an enabled flag. `style.Detect` resolves `auto`: given a query function it sends an OSC 11 background probe and, when the terminal answers, thresholds the reported colour's Rec. 601 luma to dark or light; a silent terminal or a nil query falls through to `detectEnv`, which inspects the last field of `COLORFGBG`, treating background indices 0-6 and 8 as dark and anything else as light and defaulting to dark. The probe lives in `terminal.QueryBackground`: it writes `\x1b]11;?\x07` and reads the reply under a 100 ms deadline, polling `readable` before each byte so a terminal that ignores the query never blocks. `app.resolveTheme` runs it once, after `Enter` puts the terminal in raw mode but before the input pump's first read, so the reply is consumed here rather than being taken for a keystroke; because the styler is only used at draw time, re-resolving after the initial render costs nothing. `app.toggleTheme`, bound to `t`, swaps the styler between the two palettes and repaints on the next frame without relaying out; it is a no-op with a status message when colour is off. `darkPalette` and `lightPalette` are separate maps; the light one uses darker foregrounds. With `--no-color`, SGR prefixes and resets are omitted.
 
@@ -355,6 +362,7 @@ The repository's Go tests cover:
 
 - block and inline parsing plus basic source mappings;
 - Unicode width, wrapping, blank rows, code row expansion, shared table widths, and inline Markdown in tables;
+- frontmatter: the key/value split, the unterminated opener falling back to a rule and a paragraph, the block being recognised only at line one, literal values, per-line source mapping, and the shared key column with its hanging indent, no-trailing-whitespace and no-row-exceeds-width properties;
 - literal search, smart case, and navigation wrapping;
 - editor command splitting and adapter arguments;
 - link validation and OSC 8 output;

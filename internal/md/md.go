@@ -73,6 +73,7 @@ type parser struct {
 func (p *parser) parseBlocks() {
 	for p.i < len(p.lines) {
 		switch {
+		case p.frontMatter():
 		case p.blank():
 		case p.fencedCode():
 		case p.rule():
@@ -108,6 +109,103 @@ func (p *parser) text(body string, start, end int) []doc.Inline {
 		Text:   body,
 		Source: p.doc.Range(start, end),
 	}}
+}
+
+// frontMatter consumes a YAML frontmatter block: a `---` line at the very top
+// of the file, its key/value lines, and a closing `---` or `...`.
+//
+// Recognition is deliberately narrow. It fires only at line one, so a document
+// that opens with a horizontal rule keeps it; and an unterminated opener is
+// not frontmatter at all, so the scan rewinds and the ordinary grammar gets
+// the lines. Nothing here parses YAML: a line is split at its first key colon
+// and the value survives as literal text.
+func (p *parser) frontMatter() bool {
+	if p.i != 0 || !isFrontMatterFence(p.lines[0].text) {
+		return false
+	}
+
+	end := -1
+	for j := 1; j < len(p.lines); j++ {
+		if isFrontMatterClose(p.lines[j].text) {
+			end = j
+			break
+		}
+	}
+	if end < 0 {
+		return false // unterminated: not frontmatter, leave the lines alone
+	}
+
+	p.emit(doc.Block{Kind: doc.BlockRule}, 0, 1)
+	for j := 1; j < end; j++ {
+		p.metaLine(j)
+	}
+	p.emit(doc.Block{Kind: doc.BlockRule}, end, end+1)
+	p.i = end + 1
+	return true
+}
+
+// metaLine emits one line of frontmatter. A blank line stays blank; a line
+// with a key colon splits into Prefix and value; anything else — a nested list
+// item, a wrapped value — keeps its whole text as the value, which lines it up
+// under the values above it.
+func (p *parser) metaLine(index int) {
+	ln := p.lines[index]
+	text := strings.TrimRight(ln.text, " \t")
+	if strings.TrimSpace(text) == "" {
+		p.emit(doc.Block{Kind: doc.BlockBlank}, index, index+1)
+		return
+	}
+
+	key, value, offset := splitMeta(text)
+	p.emit(doc.Block{
+		Kind:    doc.BlockMeta,
+		Prefix:  key,
+		Inlines: p.text(value, ln.start+offset, ln.start+len(text)),
+	}, index, index+1)
+}
+
+// splitMeta cuts a frontmatter line at its first key colon — a colon followed
+// by a space or ending the line — returning the key, the value, and the byte
+// offset of the value within the line. Leading indentation stays on the key,
+// so nesting survives into the rendered column. A line with no key colon is
+// all value.
+func splitMeta(text string) (key, value string, offset int) {
+	body := strings.TrimLeftFunc(text, isSpace)
+	indent := len(text) - len(body)
+
+	for i := indent; i < len(text); i++ {
+		if text[i] != ':' {
+			continue
+		}
+		if i+1 < len(text) && text[i+1] != ' ' && text[i+1] != '\t' {
+			continue // part of a value such as doc:kb-conventions
+		}
+		if key = strings.TrimRight(text[:i], " \t"); strings.TrimSpace(key) == "" {
+			break
+		}
+		rest := i + 1
+		for rest < len(text) && (text[rest] == ' ' || text[rest] == '\t') {
+			rest++
+		}
+		return key, text[rest:], rest
+	}
+	return "", text, 0
+}
+
+// isFrontMatterFence reports whether a line opens frontmatter: exactly three
+// dashes, trailing blanks allowed.
+func isFrontMatterFence(text string) bool {
+	return strings.TrimRight(text, " \t") == "---"
+}
+
+// isFrontMatterClose reports whether a line closes frontmatter. YAML ends a
+// document with either marker and both are seen in the wild.
+func isFrontMatterClose(text string) bool {
+	switch strings.TrimRight(text, " \t") {
+	case "---", "...":
+		return true
+	}
+	return false
 }
 
 func (p *parser) blank() bool {
