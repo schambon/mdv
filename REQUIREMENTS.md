@@ -58,6 +58,7 @@ Implemented keys:
 | Tab, Shift-Tab | Select the next or previous link, scrolling it into view |
 | `<`, `>` | Go back to the previous file, or forward again |
 | Mouse click | Open the link under the pointer |
+| Mouse wheel | Move the viewport three rendered rows per notch |
 | `k`, Up | Move up one rendered row |
 | Space, PageDown, `Ctrl-F` | Move down one page |
 | `b`, PageUp, `Ctrl-B` | Move up one page |
@@ -281,6 +282,8 @@ The list is sized to its longest entry, between 18 and 32 columns. It is dropped
 
 The Darwin backend saves and restores termios, disables echo, canonical mode, signals, extended processing, CR translation, software flow control, and output post-processing, and makes enter/leave idempotent. Escape-sequence decoding supports arrows, Page Up/Down, Home, End, and Shift-Tab. A 35 ms readiness check distinguishes a bare Escape key.
 
-Entering also turns on mouse tracking (modes 1000 and 1006: button presses and releases, SGR-encoded, no motion reporting), and leaving turns it off again — including around a suspended editor, which goes through the same leave and re-enter. Only a press of the primary button becomes an event; releases, other buttons, drags and the wheel are discarded by the decoder. While mdv runs, the terminal's own drag-to-select needs the modifier key that terminal uses to bypass tracking.
+Entering also turns on mouse tracking (modes 1000 and 1006: button presses and releases, SGR-encoded, no motion reporting), and leaving turns it off again — including around a suspended editor, which goes through the same leave and re-enter. A press of the primary button and a vertical wheel notch become events; releases, the other buttons, drags, horizontal notches and the extra buttons are discarded by the decoder. Modifier bits do not change what an event is, so a shift-click is still a click.
+
+Because tracking stops the terminal from scrolling the alternate screen itself, the viewer moves the viewport for the wheel — three rendered rows per notch, clamped like any other movement and working in every mode, including with a search prompt open. While mdv runs, the terminal's own drag-to-select needs the modifier key that terminal uses to bypass tracking.
 
 `SIGWINCH` updates the stored size, reflows the document, and redraws. `SIGINT`, `SIGTERM`, and `SIGHUP` exit cleanly through deferred terminal restoration. A recovered application panic restores the terminal and is rethrown as `mdv: internal panic`.

@@ -22,10 +22,15 @@ const (
 	KeyEnd
 	KeyTab
 	KeyShiftTab
-	// KeyMouse is a press of the primary mouse button. Releases, other
-	// buttons and wheel events are discarded by the decoder, so a KeyMouse
-	// event always means "the reader clicked here".
+	// KeyMouse is a press of the primary mouse button. Releases, the other
+	// buttons and drags are discarded by the decoder, so a KeyMouse event
+	// always means "the reader clicked here".
 	KeyMouse
+	// KeyWheelUp and KeyWheelDown are wheel notches. Tracking takes the wheel
+	// away from the terminal, which would otherwise scroll the alternate
+	// screen itself, so the application has to move the viewport for it.
+	KeyWheelUp
+	KeyWheelDown
 )
 
 // Event is one input event. Col and Row are the 1-based cell the pointer was

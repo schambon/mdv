@@ -190,6 +190,13 @@ func TestLinkKeysInertInDiffMode(t *testing.T) {
 		t.Error("a click followed a link in diff mode")
 	}
 
+	// The wheel is not a link key and must keep scrolling here.
+	a.handle(press(terminal.KeyWheelDown))
+	if a.top != before+wheelRows {
+		t.Errorf("top = %d after a wheel notch, want %d", a.top, before+wheelRows)
+	}
+	a.top = before
+
 	// Enter keeps its plain meaning, since nothing can be selected.
 	a.handle(press(terminal.KeyEnter))
 	if a.top != before+1 {

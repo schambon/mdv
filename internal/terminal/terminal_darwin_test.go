@@ -137,11 +137,19 @@ func TestDecodeMouse(t *testing.T) {
 	}{
 		{"primary press", "<0;12;34M", KeyMouse, 12, 34},
 		{"coordinates beyond the legacy 223 cap", "<0;1920;1080M", KeyMouse, 1920, 1080},
+		{"shift-click is still a click", "<4;12;34M", KeyMouse, 12, 34},
 		{"release is dropped", "<0;12;34m", KeyNone, 0, 0},
 		{"middle button is dropped", "<1;12;34M", KeyNone, 0, 0},
 		{"right button is dropped", "<2;12;34M", KeyNone, 0, 0},
-		{"wheel up is dropped", "<64;12;34M", KeyNone, 0, 0},
 		{"drag is dropped", "<32;12;34M", KeyNone, 0, 0},
+
+		// Tracking takes the wheel away from the terminal, so these have to
+		// reach the viewer or scrolling stops working entirely.
+		{"wheel up", "<64;12;34M", KeyWheelUp, 0, 0},
+		{"wheel down", "<65;12;34M", KeyWheelDown, 0, 0},
+		{"wheel with a modifier held", "<68;12;34M", KeyWheelUp, 0, 0},
+		{"horizontal wheel is dropped", "<66;12;34M", KeyNone, 0, 0},
+		{"extra buttons are dropped", "<128;12;34M", KeyNone, 0, 0},
 		{"missing field", "<0;12M", KeyNone, 0, 0},
 		{"non-numeric field", "<0;x;34M", KeyNone, 0, 0},
 		{"zero column", "<0;0;34M", KeyNone, 0, 0},

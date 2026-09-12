@@ -355,6 +355,54 @@ func TestClickOpensTheLinkUnderThePointer(t *testing.T) {
 	}
 }
 
+// Mouse tracking stops the terminal from scrolling the alternate screen, so
+// the wheel has to move the viewport here or scrolling breaks outright.
+func TestWheelScrollsTheViewport(t *testing.T) {
+	a := newLinkApp(t, numberedLines(60), newFake())
+
+	a.handle(press(terminal.KeyWheelDown))
+	if a.top != wheelRows {
+		t.Fatalf("top = %d after one notch down, want %d", a.top, wheelRows)
+	}
+	a.handle(press(terminal.KeyWheelDown))
+	if a.top != 2*wheelRows {
+		t.Errorf("top = %d after two notches, want %d", a.top, 2*wheelRows)
+	}
+	a.handle(press(terminal.KeyWheelUp))
+	if a.top != wheelRows {
+		t.Errorf("top = %d after a notch back up, want %d", a.top, wheelRows)
+	}
+}
+
+// The wheel is a scroll gesture, not a binding: it clamps at the ends like any
+// other movement, and it keeps working while a search prompt is open.
+func TestWheelClampsAndWorksInEveryMode(t *testing.T) {
+	a := newLinkApp(t, numberedLines(60), newFake())
+
+	for range 100 {
+		a.handle(press(terminal.KeyWheelUp))
+	}
+	if a.top != 0 {
+		t.Errorf("top = %d at the start of the document, want 0", a.top)
+	}
+	for range 100 {
+		a.handle(press(terminal.KeyWheelDown))
+	}
+	if a.top != a.maxTop() {
+		t.Errorf("top = %d at the end, want %d", a.top, a.maxTop())
+	}
+
+	a.top = 0
+	a.handle(key('/'))
+	a.handle(press(terminal.KeyWheelDown))
+	if a.top != wheelRows {
+		t.Errorf("top = %d with a search prompt open, want %d", a.top, wheelRows)
+	}
+	if a.mode != modeSearch {
+		t.Error("the wheel left search mode")
+	}
+}
+
 func TestClickOffALinkDoesNothing(t *testing.T) {
 	a := newLinkApp(t, "plain text with no link at all\n\n[one](other.md)\n", newFake())
 

@@ -374,13 +374,26 @@ func decodeMouse(seq []rune) Event {
 		n[i] = v
 	}
 
-	// Only the modifier bits — shift (4), meta (8) and control (16) — may be
-	// set. Everything else names a different event: bits 0-1 select the
-	// button, 0x20 marks motion, and 0x40 and 0x80 the wheel and the extra
-	// buttons. Testing for what is allowed rather than against a list of
-	// rejects means a report this decoder has never seen is dropped, not
-	// mistaken for a click.
-	if final != 'M' || n[0]&^0x1C != 0 {
+	// A release reports which button came up, but the press has already been
+	// acted on, so it carries nothing new.
+	if final != 'M' {
+		return Event{Key: KeyNone}
+	}
+
+	// The modifier bits — shift (4), meta (8) and control (16) — say nothing
+	// about which event this is, so they are masked off before the rest is
+	// read. Of what remains, 0x40 marks the wheel, whose low bits then give
+	// the direction, and 0 is the primary button.
+	switch button := n[0] &^ 0x1C; {
+	case button == 0x40:
+		return Event{Key: KeyWheelUp}
+	case button == 0x41:
+		return Event{Key: KeyWheelDown}
+	case button != 0:
+		// Every other button, a drag (0x20), horizontal wheel notches and the
+		// extra buttons (0x80). Testing for what is allowed rather than
+		// against a list of rejects means a report this decoder has never
+		// seen is dropped, not mistaken for a click.
 		return Event{Key: KeyNone}
 	}
 	if n[1] < 1 || n[2] < 1 {
