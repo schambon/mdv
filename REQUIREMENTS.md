@@ -86,7 +86,7 @@ The block parser implements:
 
 Nested block structure is not modeled. A fence's info string is kept: its first word, lowercased, names the language used for the bounded syntax highlighting described below. Table alignment colons do not affect alignment. Escaped pipes and other complex table syntax are not supported.
 
-The inline parser implements paired `**` and `__` strong emphasis, paired `*` and `_` emphasis, paired `~~` strikethrough, single-backtick code spans, `[label](target)` links, and bare lowercase `http://` or `https://` URLs. Delimiters are matched by the next closing delimiter; nesting, escaping, reference links, autolinks, images, and pathological delimiter rules are not supported. A pair enclosing nothing, as in `a ** b`, is treated as unmatched so the delimiters stay visible rather than rendering as an empty span.
+The inline parser implements paired `**` and `__` strong emphasis, paired `*` and `_` emphasis, paired `~~` strikethrough, single-backtick code spans, `[label](target)` links, and bare lowercase `http://` or `https://` URLs. Delimiters are matched by the next closing delimiter; nesting, escaping, reference links, autolinks, images, and pathological delimiter rules are not supported. A pair enclosing nothing, as in `a ** b`, is treated as unmatched so the delimiters stay visible rather than rendering as an empty span. Underscore delimiters additionally may not open or close inside a word: `customer_file_date.md` and `SCREAMING_SNAKE_CASE` render literally, while `_emphasis_` and `_file_name_` are still emphasised. Asterisks are exempt, so `a*b*c` still emphasises `b`.
 
 Inline markup is parsed in paragraphs, headings, quotes, list bodies, and table cells. Unsupported or unmatched syntax remains visible text.
 

@@ -150,7 +150,9 @@ The inline scanner operates left to right. At the current position it checks:
 3. a bare URL matching `https?://[^\s<>]+[^\s<>.,;:!?)]`; then
 4. literal text up to a byte that may start another construct.
 
-Paired-marker contents are stored as a single inline and are not recursively parsed. There is no delimiter stack or escape processing. A pair with an empty body is rejected as unmatched, so `**` alone stays visible instead of collapsing to nothing. Bare URL detection is lowercase and requires at least two characters after the scheme because of the regular expression shape. Adjacent literal runs, which the scanner emits whenever it retries at a construct byte, are merged before the inlines are returned.
+Paired-marker contents are stored as a single inline and are not recursively parsed. There is no delimiter stack or escape processing. A pair with an empty body is rejected as unmatched, so `**` alone stays visible instead of collapsing to nothing.
+
+The two underscore markers carry one extra rule: they may not open or close inside a word. `_` and `__` are rejected as openers when the preceding rune is a letter, digit, or underscore, and a closing candidate followed by such a rune is skipped rather than accepted, so the scan continues to the next one. Underscores appear inside identifiers and filenames far more often than they mean emphasis, so `customer_file_date.md` stays literal while `_emphasis_` and `_file_name_` still work. Asterisks are deliberately exempt: `a*b*c` still emphasises, as there is no competing use of `*` inside a token. The test is on runes, not bytes, so `café_au_lait` is a word too. Bare URL detection is lowercase and requires at least two characters after the scheme because of the regular expression shape. Adjacent literal runs, which the scanner emits whenever it retries at a construct byte, are merged before the inlines are returned.
 
 `ParseInline` exposes the same scanner to table layout so table cells receive identical supported inline styling.
 

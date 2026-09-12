@@ -3,6 +3,8 @@ package md
 import (
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/schambon/mdv/internal/doc"
 )
@@ -16,13 +18,18 @@ var bareURL = regexp.MustCompile(`^https?://[^\s<>]+[^\s<>.,;:!?)]`)
 var pairedMarkers = []struct {
 	marker string
 	kind   doc.InlineKind
+	// intraword marks a delimiter that must not open or close inside a word.
+	// Underscores carry meaning inside identifiers and filenames far more
+	// often than they mean emphasis, so customer_file_date.md stays literal
+	// while _emphasis_ still works. Asterisks have no such competing use.
+	intraword bool
 }{
-	{"**", doc.InlineStrong},
-	{"__", doc.InlineStrong},
-	{"~~", doc.InlineStrike},
-	{"`", doc.InlineCode},
-	{"*", doc.InlineEmphasis},
-	{"_", doc.InlineEmphasis},
+	{"**", doc.InlineStrong, false},
+	{"__", doc.InlineStrong, true},
+	{"~~", doc.InlineStrike, false},
+	{"`", doc.InlineCode, false},
+	{"*", doc.InlineEmphasis, false},
+	{"_", doc.InlineEmphasis, true},
 }
 
 // constructBytes are the bytes that may begin a non-text inline. Literal text
@@ -58,7 +65,7 @@ func ParseInline(text string, offset int, pos func(int) doc.Position) []doc.Inli
 			continue
 		}
 
-		if kind, body, size, ok := matchPaired(rest); ok {
+		if kind, body, size, ok := matchPaired(rest, text[:i]); ok {
 			add(kind, body, "", i, i+size)
 			i += size
 			continue
@@ -101,14 +108,19 @@ func matchLink(s string) (label, target string, size int, ok bool) {
 	return s[1:mid], s[mid+2 : end-1], end, true
 }
 
-// matchPaired recognizes a marker closed by the next identical marker.
-func matchPaired(s string) (kind doc.InlineKind, body string, size int, ok bool) {
+// matchPaired recognizes a marker closed by the next identical marker. before
+// is the text already consumed on this line; an intraword marker consults its
+// last rune to decide whether it is opening a word or sitting inside one.
+func matchPaired(s, before string) (kind doc.InlineKind, body string, size int, ok bool) {
 	for _, m := range pairedMarkers {
 		if !strings.HasPrefix(s, m.marker) {
 			continue
 		}
+		if m.intraword && wordRuneBefore(before) {
+			continue
+		}
 		rest := s[len(m.marker):]
-		closeIdx := strings.Index(rest, m.marker)
+		closeIdx := closingIndex(rest, m.marker, m.intraword)
 		// An empty body means the delimiters would render as nothing at all,
 		// so treat it as unmatched and let the text stay visible instead.
 		if closeIdx <= 0 {
@@ -117,6 +129,43 @@ func matchPaired(s string) (kind doc.InlineKind, body string, size int, ok bool)
 		return m.kind, rest[:closeIdx], len(m.marker)*2 + closeIdx, true
 	}
 	return 0, "", 0, false
+}
+
+// closingIndex finds the marker that closes the run. For an intraword marker
+// it skips candidates that sit inside a word, so _a_b_ closes on the last
+// underscore rather than giving up at the middle one.
+func closingIndex(rest, marker string, intraword bool) int {
+	from := 0
+	for {
+		idx := strings.Index(rest[from:], marker)
+		if idx < 0 {
+			return -1
+		}
+		idx += from
+		if intraword && wordRuneAfter(rest[idx+len(marker):]) {
+			from = idx + len(marker)
+			continue
+		}
+		return idx
+	}
+}
+
+// wordRune reports whether r is the kind of character that makes a delimiter
+// look like part of a token rather than markup.
+func wordRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// wordRuneBefore reports whether s ends in a word rune.
+func wordRuneBefore(s string) bool {
+	r, size := utf8.DecodeLastRuneInString(s)
+	return size > 0 && wordRune(r)
+}
+
+// wordRuneAfter reports whether s begins with a word rune.
+func wordRuneAfter(s string) bool {
+	r, size := utf8.DecodeRuneInString(s)
+	return size > 0 && wordRune(r)
 }
 
 // mergeText coalesces adjacent literal runs, which the scanner emits in small

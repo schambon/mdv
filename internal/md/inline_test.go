@@ -170,3 +170,42 @@ func TestInlineConsumesEveryByteExactlyOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestInlineUnderscoreInsideWordStaysLiteral(t *testing.T) {
+	check(t, "see customer_file_date.md today",
+		want{doc.InlineText, "see customer_file_date.md today", ""})
+	check(t, "snake_case and SCREAMING_SNAKE_CASE",
+		want{doc.InlineText, "snake_case and SCREAMING_SNAKE_CASE", ""})
+	check(t, "a__b__c", want{doc.InlineText, "a__b__c", ""})
+	// The opener is fine but the closer sits inside a word, so nothing pairs.
+	check(t, "an _odd file_name here",
+		want{doc.InlineText, "an _odd file_name here", ""})
+}
+
+func TestInlineUnderscoreEmphasisStillWorks(t *testing.T) {
+	check(t, "_emph_", want{doc.InlineEmphasis, "emph", ""})
+	check(t, "__strong__", want{doc.InlineStrong, "strong", ""})
+	check(t, "an _emph_ word",
+		want{doc.InlineText, "an ", ""},
+		want{doc.InlineEmphasis, "emph", ""},
+		want{doc.InlineText, " word", ""})
+	// Closing against punctuation, not just whitespace.
+	check(t, "(_emph_)",
+		want{doc.InlineText, "(", ""},
+		want{doc.InlineEmphasis, "emph", ""},
+		want{doc.InlineText, ")", ""})
+	// Intraword candidates are skipped on the way to a real closer.
+	check(t, "_file_name_", want{doc.InlineEmphasis, "file_name", ""})
+}
+
+func TestInlineAsteriskIsUnaffectedByTheWordRule(t *testing.T) {
+	check(t, "a*b*c",
+		want{doc.InlineText, "a", ""},
+		want{doc.InlineEmphasis, "b", ""},
+		want{doc.InlineText, "c", ""})
+}
+
+func TestInlineUnderscoreWordRuleIsUnicodeAware(t *testing.T) {
+	check(t, "café_au_lait", want{doc.InlineText, "café_au_lait", ""})
+	check(t, "_café_", want{doc.InlineEmphasis, "café", ""})
+}
