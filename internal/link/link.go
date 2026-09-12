@@ -71,8 +71,13 @@ const (
 )
 
 // Valid reports whether a target may be emitted as a hyperlink. Only absolute
-// http, https and mailto URLs qualify: relative targets are not resolved
-// against the source directory, and other schemes are not trusted.
+// http, https and mailto URLs qualify: the terminal has no idea which
+// directory the document came from, so a relative target means nothing to it,
+// and other schemes are not trusted.
+//
+// This is a narrower question than Classify's, and the two are meant to
+// disagree. mdv follows a relative target itself, resolving it against the
+// document's directory; it just does not ask the terminal to.
 func Valid(target string) bool {
 	if target == "" || hasControl(target) {
 		return false

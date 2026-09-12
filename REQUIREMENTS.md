@@ -4,7 +4,7 @@
 
 `mdv` is an interactive, standard-library-only Markdown viewer for macOS terminals. It displays one local Markdown file in an alternate-screen pager, supports literal search, emits OSC 8 hyperlinks for safe external URLs, and can open the source file in an editor. It also compares two files side by side in the same pager (§9).
 
-The implementation is intentionally a bounded Markdown renderer, not a CommonMark or GitHub Flavored Markdown implementation. HTML, standard input, file watching, local-link resolution, and non-macOS terminals are not supported. Fenced code carries deliberately coarse syntax highlighting for a fixed set of languages (see §5); it is not a full language grammar. More than two files at once is not supported.
+The implementation is intentionally a bounded Markdown renderer, not a CommonMark or GitHub Flavored Markdown implementation. HTML, standard input, file watching, in-document anchors, and non-macOS terminals are not supported. Fenced code carries deliberately coarse syntax highlighting for a fixed set of languages (see §5); it is not a full language grammar. More than two files at once is not supported.
 
 ## 2. Command line
 

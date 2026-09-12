@@ -80,7 +80,7 @@ revisions -> git.Repo.Load -> source.FromBytes -> (as above)
 
 `source.FromBytes` wraps content that never came from the file system — a git blob has no path on disk, and a side that is a revision may not exist there at all. It enforces `MaxSize` itself, since nothing has stat'd the content, and its `Path` may be empty, which is what tells the editor key there is nothing to open.
 
-There is no source abstraction for stdin or multiple files, and no `BaseDir`: nothing resolves local links, so storing the source directory would only invite the assumption that something does.
+There is no source abstraction for stdin or multiple files, and still no `BaseDir` field even though links are now resolved against the document's directory: `Path` is absolute, so `filepath.Dir` recovers that directory wherever it is wanted, and a stored copy could only ever disagree with it. A `Source` built by `FromBytes` may have no `Path` at all, which is the same signal that already tells the editor key there is nothing to open — and one of the reasons link following is confined to viewer mode.
 
 ## 4. Semantic model
 
