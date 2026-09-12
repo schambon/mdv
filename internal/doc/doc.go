@@ -62,12 +62,19 @@ const (
 	BlockQuote
 	BlockListItem
 	BlockTableRow
+	// BlockMeta is one key/value line of a document's YAML frontmatter. The
+	// key is carried in Prefix and the value, unparsed, in Inlines: a value is
+	// data, so an asterisk in one is an asterisk and not emphasis. A line the
+	// frontmatter scanner cannot split — a nested list item, a wrapped value —
+	// is a BlockMeta with an empty Prefix, and renders under the value column.
+	BlockMeta
 )
 
 // Block is one block-level construct. Level carries the heading depth, Prefix
-// the display prefix a renderer should repeat (quote bar, list marker), and
-// Header marks a table row as its table's header. Lang carries the info string
-// of a fenced code block, lowercased, and is empty for every other kind.
+// the display prefix a renderer should repeat (quote bar, list marker,
+// frontmatter key), and Header marks a table row as its table's header. Lang
+// carries the info string of a fenced code block, lowercased, and is empty for
+// every other kind.
 type Block struct {
 	Kind    BlockKind
 	Inlines []Inline

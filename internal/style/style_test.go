@@ -40,7 +40,7 @@ func TestEveryStyleHasAnEntryInBothPalettes(t *testing.T) {
 	all := []layout.Style{
 		layout.StyleNone, layout.StyleHeading, layout.StyleEmphasis, layout.StyleStrong,
 		layout.StyleStrike, layout.StyleCode, layout.StyleInlineCode, layout.StyleQuote,
-		layout.StyleRule, layout.StyleLink, layout.StyleSearch, layout.StyleSearchActive,
+		layout.StyleRule, layout.StyleMetaKey, layout.StyleLink, layout.StyleSearch, layout.StyleSearchActive,
 		layout.StyleStatus,
 	}
 	for _, style := range all {

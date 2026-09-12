@@ -30,6 +30,9 @@ const (
 	StyleCodeNumber
 	StyleInlineCode
 	StyleQuote
+	// StyleMetaKey colours the key of a frontmatter line; its value keeps
+	// StyleNone, because a value is the document's own data.
+	StyleMetaKey
 	StyleRule
 	StyleLink
 	StyleSearch
@@ -103,6 +106,16 @@ func Render(d doc.Document, opts Options) Document {
 
 	r := &renderer{opts: opts}
 	for i := 0; i < len(d.Blocks); {
+		// Tables and frontmatter are sized across a whole run of blocks, so
+		// they are gathered here rather than dispatched one at a time.
+		if d.Blocks[i].Kind == doc.BlockMeta {
+			group := i
+			for i < len(d.Blocks) && d.Blocks[i].Kind == doc.BlockMeta {
+				i++
+			}
+			r.meta(d.Blocks[group:i])
+			continue
+		}
 		if d.Blocks[i].Kind == doc.BlockTableRow {
 			group := i
 			for i < len(d.Blocks) && d.Blocks[i].Kind == doc.BlockTableRow {

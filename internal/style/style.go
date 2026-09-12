@@ -40,6 +40,7 @@ var darkPalette = palette{
 	layout.StyleCodeNumber:   "38;5;215", // orange
 	layout.StyleInlineCode:   "38;5;211", // pink
 	layout.StyleQuote:        "38;5;245",
+	layout.StyleMetaKey:      "38;5;109", // muted cyan, dimmer than a heading
 	layout.StyleRule:         "38;5;240",
 	layout.StyleLink:         "4;34",   // underlined blue
 	layout.StyleSearch:       "30;43",  // black on yellow
@@ -73,6 +74,7 @@ var lightPalette = palette{
 	layout.StyleCodeNumber:   "38;5;130", // orange-brown
 	layout.StyleInlineCode:   "38;5;162", // deep pink
 	layout.StyleQuote:        "38;5;242",
+	layout.StyleMetaKey:      "38;5;66", // muted teal
 	layout.StyleRule:         "38;5;250",
 	layout.StyleLink:         "4;38;5;25", // underlined dark blue
 	layout.StyleSearch:       "30;43",
