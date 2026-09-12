@@ -159,6 +159,11 @@ func key(r rune) terminal.Event { return terminal.Event{Key: terminal.KeyRune, R
 // press builds a non-printable keypress.
 func press(k terminal.Key) terminal.Event { return terminal.Event{Key: k} }
 
+// click builds a primary-button press at a 1-based screen cell.
+func click(col, row int) terminal.Event {
+	return terminal.Event{Key: terminal.KeyMouse, Col: col, Row: row}
+}
+
 // quit is the event that ends the loop cleanly.
 var quit = key('q')
 
@@ -183,18 +188,23 @@ func newApp(t *testing.T, contents string, term *fakeTerminal) *App {
 			Theme: style.ThemeDark,
 			Color: false,
 		},
-		term:   term,
-		styler: style.New(style.ThemeDark, false),
-		env:    func(string) string { return "" },
-		active: -1,
+		term:       term,
+		styler:     style.New(style.ThemeDark, false),
+		env:        func(string) string { return "" },
+		active:     -1,
+		activeLink: -1,
 	}
 	a.runEdit = func([]string) error { return nil }
+	// The real opener launches a browser; a test that means to exercise it
+	// replaces this and records what it was asked to open.
+	a.runOpen = func(string) error { return nil }
 
 	if err := a.load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	a.size = terminal.Normalize(a.currentSize())
 	a.render()
+	a.refreshLinks()
 	return a
 }
 

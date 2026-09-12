@@ -12,7 +12,7 @@ The implementation owns file loading, Markdown parsing, semantic data, diffing, 
 
 ```text
 cmd/mdv/           flags, validation, exit codes, version output
-internal/app/      state, event loop, viewport, search/edit/reload actions
+internal/app/      state, event loop, viewport, search/edit/reload/link actions
 internal/source/   one-file loading and validation
 internal/md/       bounded block and inline parser
 internal/doc/      semantic blocks, inlines, and source ranges
@@ -20,7 +20,7 @@ internal/layout/   table formatting, wrapping, width, rendered spans
 internal/style/    fixed ANSI styles and OSC 8 composition
 internal/search/   literal matching and directional selection
 internal/editor/   safe command splitting and editor-specific arguments
-internal/link/     external-target validation and OSC 8 encoding
+internal/link/     target validation and classification, OSC 8 encoding
 internal/terminal/ Darwin raw mode, sizing, events, and screen lifecycle
 internal/difftext/ Myers line and word diff over any comparable slice
 internal/diffdoc/  aligned diff rows, intraline segments, folding
@@ -215,6 +215,18 @@ Semantic layout styles map to fixed SGR sequences. Headings are bold cyan; empha
 
 `style.Span` applies `link.Open` whenever a span has a nonempty target, independently of the SGR enabled flag. `link.Valid` rejects C0 and DEL, parses with `net/url`, and allows only exact `http`, `https`, and `mailto` schemes. Valid links are wrapped with ST-terminated OSC 8 open and close sequences. Invalid targets return the unchanged label.
 
+`StyleLinkActive` marks the link the reader has selected. It is carried in `Span.Background` rather than `Span.Style`, which is the same split as everywhere else — the span is still a link, and what changed is that it is selected — and it is what lets search highlighting, which rewrites `Style`, compose with the selection instead of erasing it.
+
+### 7.1 Following a link
+
+`link.Classify` decides how a target can be followed, and is separate from `link.Valid`, which decides what may be dressed as an OSC 8 hyperlink. The two deliberately disagree: a relative target is followable but not clickable by the terminal, since the terminal has no idea which directory the document came from. `Classify` returns `KindExternal` for the three schemes `Valid` accepts, `KindNone` for an empty target, one carrying a control character, one with any other scheme, and one that is a network-path reference, and otherwise `KindRelative` together with the path to resolve — fragment dropped, remainder percent-decoded, empty for a bare `#anchor`.
+
+`layout.Links` inverts rendering: given the laid-out rows it reports where each link ended up, as a `Link` carrying the target, the source range, and one `Ref` — a row index and a span index — per span the link occupies. It lives in package `layout` for the same reason `table.go` and `meta.go` do: it reads the `Span` model, which a separate package would need exported to it. Spans join a link when they share both target and source range, which `runs` takes from the whole inline, so a label split by wrapping is one link while `[a](x)[b](x)` is two. Only the most recently built link can be extended, and the runs of one inline are emitted contiguously, so no adjacency test is needed and a label that wraps past a continuation prefix still joins.
+
+`internal/app/links.go` holds the viewer half. `refreshLinks` recollects the links wherever `refreshMatches` recomputes matches, for the same reason: a `Ref` indexes the row list, which a relaid-out document rebuilds. `cycleLink` walks the list with wraparound, starting from the viewport rather than the top of the file when nothing is selected, and calls the existing `reveal` so an off-screen link is scrolled into view. `linkAt` maps a click to a link by walking the row's spans against a cell budget, so a wide rune costs the two columns it occupies. `openTarget` is the single entry point for Enter and for a click; `visit` is the only place outside git mode that changes `cfg.Path`, and it validates before mutating anything so a failure leaves the view untouched. `back` and `forward` are stacks of `visit{path, line}`; `step` implements both directions once, restoring position through `layout.Nearest`.
+
+Opening an external URL goes through the injected `runOpen`, mirroring `runEdit`, whose real implementation execs `/usr/bin/open` with the target as argv. No shell is involved, and `Classify` has already established that the target is one of three schemes and carries no control characters, so it cannot be read as a flag; the absolute path is used rather than a `PATH` lookup for the same reason. Unlike the editor it does not go through `Suspend`: the opener does not want the tty, and suspending would flash the screen for a browser launch.
+
 ## 8. Search
 
 `search.Find` scans each `RenderedLine.SearchText`. Smart case is determined with `unicode.IsUpper` on the query. Case-insensitive operation applies `strings.ToLower` to both strings, except on a row whose lowered form changes byte length, which stays case sensitive rather than corrupting every offset on that row. Match positions are byte offsets, and the next search within a row begins at the end of the previous match, preventing overlap.
@@ -231,15 +243,21 @@ The usable page height is terminal height minus one status row. Viewport movemen
 
 Reload calls `source.Load`, reads the current terminal size, selects terminal width or a narrower configured width, reparses and rerenders, and positions the viewport at `layout.Nearest`. `Nearest` minimizes absolute distance between requested and rendered source start lines and selects the earliest row on ties.
 
-Resize takes the same path through the shared `reflow` helper: it records the source line on screen, applies the change, calls `render`, and restores the viewport with `Nearest`. Text therefore reflows to the new width while the reader keeps their place. Anything that invalidates the layout goes through `reflow` — `SIGWINCH`, the `l` gutter toggle, and diff folding — and every path recomputes search matches through `refreshMatches`, since the rows the matches refer to have been rebuilt.
+Resize takes the same path through the shared `reflow` helper: it records the source line on screen, applies the change, calls `render`, and restores the viewport with `Nearest`. Text therefore reflows to the new width while the reader keeps their place. Anything that invalidates the layout goes through `reflow` — `SIGWINCH`, the `l` gutter toggle, and diff folding — and every path recomputes search matches through `refreshMatches` and the link list through `refreshLinks`, since the rows both refer to have been rebuilt. Both drop their active selection rather than trying to track it across re-wrapping.
+
+Frame composition applies the link band before search highlighting, because highlighting splits spans and a `layout.Ref`'s span index would no longer point at the same text afterwards. `markActiveLink` copies the row's span slice before writing to it: the rendered document is shared by every frame.
 
 `l` toggles `Config.LineNumbers` at runtime. The gutter takes its width out of the content rather than overlaying it, so the toggle is a relayout and not merely a redraw; in diff mode it re-lays out the existing rows without rebuilding the diff, leaving expanded folds open.
 
 ## 10. Terminal backend
 
-`terminal.New` on Darwin requires stdin and stdout modes to include `os.ModeCharDevice`. `Enter` saves termios, clears `ECHO`, `ICANON`, `ISIG`, `IEXTEN`, `ICRNL`, `IXON`, and `OPOST`, sets `VMIN=1` and `VTIME=0`, then enters the alternate screen and hides the cursor. `Leave` resets SGR, shows the cursor, leaves the alternate screen, and restores termios. Both are guarded by a mutex and an `entered` flag.
+`terminal.New` on Darwin requires stdin and stdout modes to include `os.ModeCharDevice`. `Enter` saves termios, clears `ECHO`, `ICANON`, `ISIG`, `IEXTEN`, `ICRNL`, `IXON`, and `OPOST`, sets `VMIN=1` and `VTIME=0`, then enters the alternate screen, hides the cursor, and turns on mouse tracking. `Leave` turns tracking off first — leaving it on would take text selection away from the shell mdv hands the screen back to — then resets SGR, shows the cursor, leaves the alternate screen, and restores termios. Both are guarded by a mutex and an `entered` flag.
 
-Window size uses `TIOCGWINSZ` on stdout. Input uses `bufio.Reader.ReadRune`. Enter accepts CR or LF; backspace accepts DEL or BS. CSI decoding recognizes arrows, Page Up/Down, and two Home/End variants. Escape waits up to 35 ms using `select`; unknown sequences become Escape events. CSI collection is capped at five bytes.
+Tracking is modes 1000 and 1006: presses and releases but no motion, which would flood the pump, and SGR-encoded coordinates, which are decimal and so are not capped at column 223 the way the original encoding is. `Suspend` is `Leave` then `Enter`, so a suspended editor already runs with tracking off and gets it back on return.
+
+Window size uses `TIOCGWINSZ` on stdout. Input uses `bufio.Reader.ReadRune`. Enter accepts CR or LF; backspace accepts DEL or BS; Tab arrives as the bare control byte. CSI decoding recognizes arrows, Page Up/Down, two Home/End variants, and `CSI Z` for Shift-Tab. Escape waits up to 35 ms using `select`; unknown sequences become Escape events. CSI collection is capped at 32 bytes, which admits a mouse report while staying bounded.
+
+`decodeMouse` handles a sequence opening with `<`. It accepts only a press — final byte `M` — whose button field has nothing but the modifier bits set. Testing for what is allowed rather than against a list of rejects means a report this decoder has never seen is dropped rather than mistaken for a click. Everything it drops becomes `KeyNone`, which the viewer ignores, rather than `KeyEscape`: it was plainly a mouse report, and turning it into a keypress would be worse than dropping it.
 
 `Suspend` calls `Leave`, runs a callback, then calls `Enter`, preferring the callback error over a re-entry error. Frames are written directly to stdout in one call. The application starts each frame with cursor-home and clear-screen, emits every visible row with erase-to-end, fills unused page rows, and writes the reverse-video status row, clipped to the terminal width so it cannot wrap. Because `OPOST` is disabled, row endings are explicit CRLF.
 
@@ -257,7 +275,7 @@ Editing suspends the terminal, connects the child to process stdin/stdout/stderr
 
 ## 12. Error and resource behavior
 
-Initial load and render happen before raw mode. Terminal entry failures are returned directly. After entry, `Leave` is deferred. Reload and editor failures are recoverable status messages; frame writes and terminal-read failures terminate the application. The entire file and rendered document are held in memory. There is no render cache, filesystem watcher, background reload, or configurable size limit.
+Initial load and render happen before raw mode. Terminal entry failures are returned directly. After entry, `Leave` is deferred. Reload, editor, link-following and system-opener failures are recoverable status messages; frame writes and terminal-read failures terminate the application. The entire file and rendered document are held in memory. There is no render cache, filesystem watcher, background reload, or configurable size limit.
 
 ## 13. Diff mode
 
@@ -367,7 +385,9 @@ The repository's Go tests cover:
 - frontmatter: the key/value split, the unterminated opener falling back to a rule and a paragraph, the block being recognised only at line one, literal values, per-line source mapping, and the shared key column with its hanging indent, no-trailing-whitespace and no-row-exceeds-width properties;
 - literal search, smart case, and navigation wrapping;
 - editor command splitting and adapter arguments;
-- link validation and OSC 8 output;
+- link validation and OSC 8 output, and target classification: fragments, percent escapes, relative and absolute paths, the refused schemes, and that `Classify` and `Valid` deliberately disagree on a relative target;
+- link collection from laid-out rows: document order, a wrapped label staying one link across rows and across a continuation prefix, two links to one target staying distinct, bare URLs, and every ref pointing at a span that really carries the target;
+- link following over fakes: Tab and Shift-Tab cycling and wrapping, starting from the viewport and scrolling a selection into view, Escape clearing it, Enter opening a selection and still scrolling without one, resolution against the document's own directory, the four unfollowable targets each reporting and leaving the viewport put, external URLs reaching the injected opener and refused ones not, back and forward with position restored and the forward stack cleared, clicks on and off a link and outside the document, the selection banded in the background without writing through the shared document and surviving search highlighting, and every link key inert in diff mode;
 - theme/no-colour behavior;
 - terminal event decoding, escape-sequence handling, and size normalization;
 - command-line parsing, validation, and exit codes, including the diff form and its flags;

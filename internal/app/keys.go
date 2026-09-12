@@ -14,7 +14,7 @@ const (
 	ctrlR = 0x12
 )
 
-const keyHelp = "j/k move  space/b page  g/G ends  / ? search  n/N next  l numbers  t theme  v edit  r reload  q quit"
+const keyHelp = "j/k move  space/b page  g/G ends  tab link  enter open  < > back/fwd  / ? search  n/N next  l numbers  t theme  v edit  r reload  q quit"
 
 const diffKeyHelp = "j/k move  space/b page  [ ] hunk  x/X expand  z collapse  l numbers  t theme  / search  v edit  q quit"
 
@@ -51,8 +51,20 @@ func (a *App) handleNormalKey(ev terminal.Event) (bool, error) {
 	}
 
 	switch ev.Key {
-	case terminal.KeyDown, terminal.KeyEnter:
+	case terminal.KeyDown:
 		a.scroll(1)
+	case terminal.KeyEnter:
+		// Enter opens the link Tab selected, and otherwise keeps its original
+		// meaning. Escape clears the selection to get plain scrolling back.
+		if !a.openActiveLink() {
+			a.scroll(1)
+		}
+	case terminal.KeyTab:
+		a.cycleLink(1)
+	case terminal.KeyShiftTab:
+		a.cycleLink(-1)
+	case terminal.KeyMouse:
+		a.clickLink(ev)
 	case terminal.KeyUp:
 		a.scroll(-1)
 	case terminal.KeyPageDown:
@@ -64,7 +76,8 @@ func (a *App) handleNormalKey(ev terminal.Event) (bool, error) {
 	case terminal.KeyEnd:
 		a.top = a.maxTop()
 	case terminal.KeyEscape:
-		// Nothing to cancel in normal mode.
+		// Nothing to cancel in normal mode but a link selection.
+		a.clearLink()
 	case terminal.KeyRune:
 		return a.handleRune(ev.Rune)
 	}
@@ -105,6 +118,12 @@ func (a *App) handleRune(r rune) (bool, error) {
 		}
 	case 'v':
 		return false, a.edit()
+	case '<':
+		// Unreachable in diff mode: handleDiffRune claims both keys there for
+		// the changed-file list before this switch is ever entered.
+		a.goBack()
+	case '>':
+		a.goForward()
 	case '/':
 		a.beginSearch(search.Forward)
 	case '?':

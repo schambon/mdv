@@ -20,8 +20,9 @@ import (
 const escapeTimeout = 35 * time.Millisecond
 
 // maxSequence caps how many bytes a CSI sequence may collect before it is
-// abandoned, so malformed input cannot stall the reader.
-const maxSequence = 5
+// abandoned, so malformed input cannot stall the reader. It has to admit an
+// SGR mouse report — "<0;1920;1080M" is thirteen bytes — while staying bounded.
+const maxSequence = 32
 
 type darwinTerminal struct {
 	in  *os.File
@@ -75,7 +76,7 @@ func (t *darwinTerminal) Enter() error {
 		return fmt.Errorf("enter raw mode: %w", err)
 	}
 
-	if _, err := t.out.WriteString(EnterAltScreen + HideCursor); err != nil {
+	if _, err := t.out.WriteString(EnterAltScreen + HideCursor + EnableMouse); err != nil {
 		// Put the modes back rather than leaving a half-entered terminal.
 		_ = setTermios(t.in.Fd(), t.saved)
 		return err
@@ -95,7 +96,9 @@ func (t *darwinTerminal) Leave() error {
 	}
 	t.entered = false
 
-	_, writeErr := t.out.WriteString(ResetSGR + ShowCursor + LeaveAltScreen)
+	// Mouse tracking goes off first: leaving it on would take the terminal's
+	// own text selection away from the shell mdv hands the screen back to.
+	_, writeErr := t.out.WriteString(DisableMouse + ResetSGR + ShowCursor + LeaveAltScreen)
 	modeErr := setTermios(t.in.Fd(), t.saved)
 	return errors.Join(writeErr, modeErr)
 }
@@ -267,6 +270,8 @@ func (t *darwinTerminal) ReadEvent() (Event, error) {
 	switch r {
 	case '\r', '\n':
 		return Event{Key: KeyEnter}, nil
+	case '\t':
+		return Event{Key: KeyTab}, nil
 	case 0x7F, 0x08:
 		return Event{Key: KeyBackspace}, nil
 	case 0x1B:
@@ -315,7 +320,12 @@ func (t *darwinTerminal) pending() bool {
 
 // decodeSequence maps the tail of a CSI or SS3 sequence to a key.
 func decodeSequence(seq []rune) Event {
+	if len(seq) > 0 && seq[0] == '<' {
+		return decodeMouse(seq)
+	}
 	switch string(seq) {
+	case "Z":
+		return Event{Key: KeyShiftTab}
 	case "A":
 		return Event{Key: KeyUp}
 	case "B":
@@ -334,6 +344,49 @@ func decodeSequence(seq []rune) Event {
 		return Event{Key: KeyPageDown}
 	}
 	return Event{Key: KeyEscape}
+}
+
+// decodeMouse reads an SGR mouse report, "<button;col;row" followed by M for a
+// press or m for a release.
+//
+// Only a press of the primary button becomes an event. Releases, the other
+// buttons, drags and the wheel all resolve to KeyNone, which the viewer
+// ignores: reporting them would make every click arrive twice and leave the
+// application filtering input it never asked for. An unparseable report is
+// KeyNone as well rather than KeyEscape — it was plainly a mouse report, and
+// turning it into a keypress would be worse than dropping it.
+func decodeMouse(seq []rune) Event {
+	final := seq[len(seq)-1]
+	if final != 'M' && final != 'm' {
+		return Event{Key: KeyNone}
+	}
+
+	fields := strings.Split(string(seq[1:len(seq)-1]), ";")
+	if len(fields) != 3 {
+		return Event{Key: KeyNone}
+	}
+	var n [3]int
+	for i, f := range fields {
+		v, err := strconv.Atoi(f)
+		if err != nil || v < 0 {
+			return Event{Key: KeyNone}
+		}
+		n[i] = v
+	}
+
+	// Only the modifier bits — shift (4), meta (8) and control (16) — may be
+	// set. Everything else names a different event: bits 0-1 select the
+	// button, 0x20 marks motion, and 0x40 and 0x80 the wheel and the extra
+	// buttons. Testing for what is allowed rather than against a list of
+	// rejects means a report this decoder has never seen is dropped, not
+	// mistaken for a click.
+	if final != 'M' || n[0]&^0x1C != 0 {
+		return Event{Key: KeyNone}
+	}
+	if n[1] < 1 || n[2] < 1 {
+		return Event{Key: KeyNone}
+	}
+	return Event{Key: KeyMouse, Col: n[1], Row: n[2]}
 }
 
 // readable waits up to timeout for the file descriptor to have input.

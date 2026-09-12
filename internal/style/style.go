@@ -42,10 +42,11 @@ var darkPalette = palette{
 	layout.StyleQuote:        "38;5;245",
 	layout.StyleMetaKey:      "38;5;109", // muted cyan, dimmer than a heading
 	layout.StyleRule:         "38;5;240",
-	layout.StyleLink:         "4;34",   // underlined blue
-	layout.StyleSearch:       "30;43",  // black on yellow
-	layout.StyleSearchActive: "30;103", // black on bright yellow
-	layout.StyleStatus:       "7",      // reverse video
+	layout.StyleLink:         "4;34",    // underlined blue
+	layout.StyleLinkActive:   "48;5;60", // a band behind the selected link
+	layout.StyleSearch:       "30;43",   // black on yellow
+	layout.StyleSearchActive: "30;103",  // black on bright yellow
+	layout.StyleStatus:       "7",       // reverse video
 
 	// Diff colours are backgrounds, not foregrounds: the whole line is the
 	// unit of change, and a background survives the syntax colouring a line
@@ -77,6 +78,7 @@ var lightPalette = palette{
 	layout.StyleMetaKey:      "38;5;66", // muted teal
 	layout.StyleRule:         "38;5;250",
 	layout.StyleLink:         "4;38;5;25", // underlined dark blue
+	layout.StyleLinkActive:   "48;5;153",  // pale band behind the selected link
 	layout.StyleSearch:       "30;43",
 	layout.StyleSearchActive: "30;103",
 	layout.StyleStatus:       "7",

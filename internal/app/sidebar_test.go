@@ -31,7 +31,7 @@ func frameRows(a *App) []string {
 		index := a.top + row
 		var line layout.RenderedLine
 		if index < len(a.rendered.Lines) {
-			line = a.highlight(index)
+			line = a.highlight(a.rendered.Lines[index], index)
 		}
 		if a.sidebarWidth() > 0 {
 			line = a.compose(sidebar[row], line)

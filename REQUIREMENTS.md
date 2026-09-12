@@ -47,13 +47,17 @@ FILENAME  PERCENT%  source line CURRENT/TOTAL
 
 `CURRENT` is the source line of the first mapped rendered row at or below the top of the viewport, and `TOTAL` is the number of lines in the file.
 
-Messages and the search prompt temporarily replace it. Messages are displayed for one frame.
+Messages and the search prompt temporarily replace it. Messages are displayed for one frame. While a link is selected the status row shows its target instead of the position readout, since a link's label rarely reveals where it points.
 
 Implemented keys:
 
 | Key | Action |
 |---|---|
-| `j`, Down, Enter | Move down one rendered row |
+| `j`, Down | Move down one rendered row |
+| Enter | Open the selected link, or move down one rendered row when none is selected |
+| Tab, Shift-Tab | Select the next or previous link, scrolling it into view |
+| `<`, `>` | Go back to the previous file, or forward again |
+| Mouse click | Open the link under the pointer |
 | `k`, Up | Move up one rendered row |
 | Space, PageDown, `Ctrl-F` | Move down one page |
 | `b`, PageUp, `Ctrl-B` | Move up one page |
@@ -67,7 +71,7 @@ Implemented keys:
 | `r`, `Ctrl-R` | Reload the source |
 | `h` | Show a one-line key summary |
 | `q` | Quit |
-| Esc | Cancel search, or do nothing in normal mode |
+| Esc | Cancel search, or clear the link selection |
 
 ## 4. Markdown subset
 
@@ -117,7 +121,25 @@ Markdown links retain their labels. Bare HTTP and HTTPS URLs use the URL itself 
 - `net/url` can parse it; and
 - its scheme is exactly `http`, `https`, or `mailto`.
 
-Invalid, relative, and unsupported-scheme targets remain visible but are not clickable. Targets are not resolved against the source directory, and the application never opens links itself.
+Invalid, relative, and unsupported-scheme targets remain visible but are not marked up as hyperlinks: the terminal cannot resolve a relative target, so handing it one would be pointless.
+
+### 6.1 Following links
+
+The viewer follows links itself, in ordinary view mode only. Diff and git mode show two files named on the command line or fetched from a repository, neither of which is a place to navigate away from, and both already use `<` and `>` for the changed-file list.
+
+Tab and Shift-Tab select the next and previous link, wrapping at either end and scrolling the selection into view. With nothing selected they start from the links nearest the top of the viewport rather than from the top of the file. The selected link is drawn with a distinct background, and Esc clears the selection. Enter opens the selected link, and keeps its scrolling meaning when no link is selected. A click of the primary mouse button opens the link under the pointer; a click anywhere else does nothing.
+
+A target is followed according to its kind:
+
+- `http`, `https` and `mailto` targets are handed to the system opener (`/usr/bin/open`), which shows them in the default browser or mail client.
+- Any other target with a scheme, including `file:`, is refused.
+- Everything else is a path. Its fragment is dropped, the remainder is percent-decoded, and it is resolved against the directory of the document holding the link — not the working directory. The result must pass the same validation as a file named on the command line: a readable regular Markdown file of at most 32 MiB.
+
+Every failure — a missing file, a file that is not Markdown, a refused scheme, a target that is nothing but a `#fragment` — is reported in the status line and leaves the viewport exactly where it was.
+
+Following a link records the file being left, with the source line the reader was on. `<` returns to it at that line, and `>` moves forward again. Following a new link discards the forward history. At either end of the history the keys report that there is nothing to move to.
+
+Opening a file resets the viewport to the top and clears the search: a row index measured against one document means nothing in another.
 
 ## 7. Search
 
@@ -257,6 +279,8 @@ The list is sized to its longest entry, between 18 and 32 columns. It is dropped
 
 ## 10. Terminal lifecycle
 
-The Darwin backend saves and restores termios, disables echo, canonical mode, signals, extended processing, CR translation, software flow control, and output post-processing, and makes enter/leave idempotent. Escape-sequence decoding supports arrows, Page Up/Down, Home, and End. A 35 ms readiness check distinguishes a bare Escape key.
+The Darwin backend saves and restores termios, disables echo, canonical mode, signals, extended processing, CR translation, software flow control, and output post-processing, and makes enter/leave idempotent. Escape-sequence decoding supports arrows, Page Up/Down, Home, End, and Shift-Tab. A 35 ms readiness check distinguishes a bare Escape key.
+
+Entering also turns on mouse tracking (modes 1000 and 1006: button presses and releases, SGR-encoded, no motion reporting), and leaving turns it off again — including around a suspended editor, which goes through the same leave and re-enter. Only a press of the primary button becomes an event; releases, other buttons, drags and the wheel are discarded by the decoder. While mdv runs, the terminal's own drag-to-select needs the modifier key that terminal uses to bypass tracking.
 
 `SIGWINCH` updates the stored size, reflows the document, and redraws. `SIGINT`, `SIGTERM`, and `SIGHUP` exit cleanly through deferred terminal restoration. A recovered application panic restores the terminal and is rethrown as `mdv: internal panic`.

@@ -396,7 +396,7 @@ func TestHighlightOnlyAffectsMatchingRows(t *testing.T) {
 
 	// The row with no match must come back untouched.
 	for i := range a.rendered.Lines {
-		got := a.highlight(i)
+		got := a.highlight(a.rendered.Lines[i], i)
 		if len(got.Spans) != len(a.rendered.Lines[i].Spans) &&
 			!strings.Contains(a.rendered.Lines[i].SearchText, "alpha") {
 			t.Errorf("row %d was re-split without a match", i)

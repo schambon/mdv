@@ -40,19 +40,22 @@ func newDiffApp(t *testing.T, old, updated string, term *fakeTerminal, opts ...f
 	}
 
 	a := &App{
-		cfg:    cfg,
-		term:   term,
-		styler: style.New(style.ThemeDark, false),
-		env:    func(string) string { return "" },
-		active: -1,
+		cfg:        cfg,
+		term:       term,
+		styler:     style.New(style.ThemeDark, false),
+		env:        func(string) string { return "" },
+		active:     -1,
+		activeLink: -1,
 	}
 	a.runEdit = func([]string) error { return nil }
+	a.runOpen = func(string) error { return nil }
 
 	if err := a.load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	a.size = terminal.Normalize(a.currentSize())
 	a.render()
+	a.refreshLinks()
 	return a
 }
 
@@ -157,6 +160,40 @@ func TestDiffKeysInertInViewerMode(t *testing.T) {
 		if a.handleDiffRune(r) {
 			t.Errorf("%q was consumed outside diff mode", r)
 		}
+	}
+}
+
+// Link following is a viewer-mode feature. Diff mode shows two files that are
+// not a place to navigate away from, and it has already claimed < and > for
+// the changed-file list.
+func TestLinkKeysInertInDiffMode(t *testing.T) {
+	body := "see [docs](other.md)\n\n" + numberedLines(30)
+	a := newDiffApp(t, body, body+"\nand one more\n", wideFake(),
+		func(c *Config) { c.ForceMarkdown = true; c.Context = -1 })
+
+	if a.links != nil {
+		t.Errorf("collected %d links in diff mode, want none", len(a.links))
+	}
+
+	opened := false
+	a.runOpen = func(string) error { opened = true; return nil }
+
+	before := a.top
+	a.handle(press(terminal.KeyTab))
+	a.handle(press(terminal.KeyShiftTab))
+	if a.activeLink != -1 {
+		t.Errorf("activeLink = %d in diff mode, want -1", a.activeLink)
+	}
+
+	a.handle(click(6, 1))
+	if opened {
+		t.Error("a click followed a link in diff mode")
+	}
+
+	// Enter keeps its plain meaning, since nothing can be selected.
+	a.handle(press(terminal.KeyEnter))
+	if a.top != before+1 {
+		t.Errorf("top = %d after Enter, want %d", a.top, before+1)
 	}
 }
 
