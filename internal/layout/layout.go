@@ -35,6 +35,10 @@ const (
 	StyleMetaKey
 	StyleRule
 	StyleLink
+	// StyleLinkActive marks the link the reader has selected with Tab. It is
+	// carried in Span.Background, not Span.Style: the span is still a link,
+	// and what changed is that it is selected.
+	StyleLinkActive
 	StyleSearch
 	StyleSearchActive
 	StyleStatus

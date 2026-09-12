@@ -1,6 +1,6 @@
 # mdv
 
-`mdv` is a small, dependency-free Markdown pager for macOS terminals. It renders a practical Markdown subset with colour, paging, literal search, OSC 8 web links, source line numbers, and `$VISUAL`/`$EDITOR` integration.
+`mdv` is a small, dependency-free Markdown pager for macOS terminals. It renders a practical Markdown subset with colour, paging, literal search, followable links, source line numbers, and `$VISUAL`/`$EDITOR` integration.
 
 ```sh
 go build -o mdv ./cmd/mdv
@@ -9,6 +9,8 @@ mdv README.md
 ```
 
 The first release accepts one real `.md` or `.markdown` file and requires interactive stdin and stdout. Run `mdv --help` for options. Keys are shown with `h` inside the viewer.
+
+Links are live. Tab and Shift-Tab move between the links in the document, Enter opens the selected one, and clicking a link opens it too. A link to another Markdown file is resolved against the directory of the file holding it and shown in the same pager; `<` and `>` go back and forward through the files visited, returning you to the line you were reading. Web and `mailto` links open in your default application. A link to something mdv cannot show — a missing file, a `.go` file, a bare `#anchor` — says so in the status line and leaves your place alone.
 
 `mdv diff OLD NEW` compares two files of any type in the same pager:
 
@@ -31,4 +33,4 @@ mdv git v1.2..v1.3
 
 Git supplies the file contents; mdv computes the difference itself, so folding, expansion, search and the Markdown comparison all work as they do on two files. When several files changed, they are listed in a sidebar and `<` and `>` — or the left and right arrows — move between them.
 
-Supported Markdown includes headings, paragraphs, rules, fenced and indented code, quotes, lists and task lists, simple pipe tables, emphasis, strong, strikethrough, code spans, inline links, and bare HTTP(S) URLs. Code is styled without syntax highlighting. Reference links, footnotes, inline HTML, complex nesting, stdin, multiple files, watching, and local-link activation are deferred.
+Supported Markdown includes headings, paragraphs, rules, fenced and indented code, quotes, lists and task lists, simple pipe tables, emphasis, strong, strikethrough, code spans, inline links, and bare HTTP(S) URLs. Fenced code carries coarse syntax highlighting for a fixed set of languages. Reference links, footnotes, inline HTML, complex nesting, stdin, multiple files, watching, and in-document anchors are deferred.

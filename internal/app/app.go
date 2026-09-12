@@ -81,6 +81,7 @@ type App struct {
 	styler  style.Styler
 	env     func(string) string
 	runEdit func(argv []string) error
+	runOpen func(target string) error
 	runGit  git.Runner
 
 	src         source.Source
@@ -109,6 +110,14 @@ type App struct {
 	top     int
 	mode    mode
 	message string
+
+	// Link following. links is the current document's links in row order,
+	// activeLink the one Tab has selected (-1 for none), and back/forward the
+	// files the reader has moved between.
+	links      []layout.Link
+	activeLink int
+	back       []visit
+	forward    []visit
 
 	query     string
 	lastQuery string
@@ -149,12 +158,14 @@ func Run(cfg Config) error {
 // run is Run with the terminal injected, so tests can supply a fake.
 func run(cfg Config, term terminal.Terminal) error {
 	a := &App{
-		cfg:    cfg,
-		term:   term,
-		styler: style.New(cfg.Theme, cfg.Color),
-		env:    os.Getenv,
-		runGit: git.Exec,
-		active: -1,
+		cfg:        cfg,
+		term:       term,
+		styler:     style.New(cfg.Theme, cfg.Color),
+		env:        os.Getenv,
+		runOpen:    execOpen,
+		runGit:     git.Exec,
+		active:     -1,
+		activeLink: -1,
 	}
 	a.runEdit = a.execEditor
 
@@ -165,6 +176,7 @@ func run(cfg Config, term terminal.Terminal) error {
 	}
 	a.size = terminal.Normalize(a.currentSize())
 	a.render()
+	a.refreshLinks()
 
 	if err := term.Enter(); err != nil {
 		return err
@@ -372,6 +384,7 @@ func (a *App) reflow(change func()) {
 	a.render()
 	a.top = a.clamp(layout.Nearest(a.rendered, line))
 	a.refreshMatches()
+	a.refreshLinks()
 }
 
 // refreshMatches recomputes search matches after the rows they refer to have
@@ -431,6 +444,7 @@ func (a *App) reload() error {
 	a.render()
 	a.top = a.clamp(layout.Nearest(a.rendered, line))
 	a.refreshMatches()
+	a.refreshLinks()
 	return nil
 }
 
@@ -555,6 +569,10 @@ func (a *App) status() string {
 			prompt = "?"
 		}
 		return prompt + a.query
+	case a.activeTarget() != "":
+		// A link's label rarely reveals where it goes, so the selection
+		// displaces the position readout while it lasts.
+		return "→ " + a.activeTarget()
 	default:
 		return a.statusText()
 	}
@@ -576,7 +594,10 @@ func (a *App) draw() error {
 		index := a.top + row
 		var line layout.RenderedLine
 		if index < len(a.rendered.Lines) {
-			line = a.highlight(index)
+			// The link band is applied first: search highlighting splits
+			// spans, and a layout.Ref's span index would no longer point at
+			// the same text afterwards.
+			line = a.highlight(a.markActiveLink(index), index)
 		}
 		if sidebar != nil {
 			line = a.compose(sidebar[row], line)
@@ -598,9 +619,11 @@ func (a *App) draw() error {
 	return a.term.Draw(sb.String())
 }
 
-// highlight applies search highlighting to one rendered row.
-func (a *App) highlight(index int) layout.RenderedLine {
-	line := a.rendered.Lines[index]
+// highlight applies search highlighting to one rendered row. The row is passed
+// in rather than read from the document, so a caller can band a selected link
+// into it first; index is still the row's position, which is what matches are
+// recorded against.
+func (a *App) highlight(line layout.RenderedLine, index int) layout.RenderedLine {
 	if len(a.matches) == 0 {
 		return line
 	}

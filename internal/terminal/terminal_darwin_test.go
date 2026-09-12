@@ -27,8 +27,9 @@ func TestDecodeSequence(t *testing.T) {
 		{"8~", KeyEnd},
 		{"5~", KeyPageUp},
 		{"6~", KeyPageDown},
-		{"Z", KeyEscape},   // unknown sequences degrade to Escape
+		{"Z", KeyShiftTab},
 		{"99~", KeyEscape}, // unknown numeric parameter
+		{"~", KeyEscape},   // unknown sequences degrade to Escape
 	}
 	for _, tt := range tests {
 		t.Run(tt.seq, func(t *testing.T) {
@@ -113,6 +114,64 @@ func TestReadEventOverlongSequenceDegradesToEscape(t *testing.T) {
 	got := readEvents(t, "\x1b[123456789", 1)
 	if got[0].Key != KeyEscape {
 		t.Errorf("event = %v, want KeyEscape", got[0].Key)
+	}
+}
+
+// Tab arrives as a bare control byte, Shift-Tab as CSI Z.
+func TestReadEventTabAndShiftTab(t *testing.T) {
+	got := readEvents(t, "\t\x1b[Z", 2)
+	want := []Key{KeyTab, KeyShiftTab}
+	for i, k := range want {
+		if got[i].Key != k {
+			t.Errorf("event %d = %v, want %v", i, got[i].Key, k)
+		}
+	}
+}
+
+func TestDecodeMouse(t *testing.T) {
+	tests := []struct {
+		name     string
+		seq      string
+		want     Key
+		col, row int
+	}{
+		{"primary press", "<0;12;34M", KeyMouse, 12, 34},
+		{"coordinates beyond the legacy 223 cap", "<0;1920;1080M", KeyMouse, 1920, 1080},
+		{"shift-click is still a click", "<4;12;34M", KeyMouse, 12, 34},
+		{"release is dropped", "<0;12;34m", KeyNone, 0, 0},
+		{"middle button is dropped", "<1;12;34M", KeyNone, 0, 0},
+		{"right button is dropped", "<2;12;34M", KeyNone, 0, 0},
+		{"drag is dropped", "<32;12;34M", KeyNone, 0, 0},
+
+		// Tracking takes the wheel away from the terminal, so these have to
+		// reach the viewer or scrolling stops working entirely.
+		{"wheel up", "<64;12;34M", KeyWheelUp, 0, 0},
+		{"wheel down", "<65;12;34M", KeyWheelDown, 0, 0},
+		{"wheel with a modifier held", "<68;12;34M", KeyWheelUp, 0, 0},
+		{"horizontal wheel is dropped", "<66;12;34M", KeyNone, 0, 0},
+		{"extra buttons are dropped", "<128;12;34M", KeyNone, 0, 0},
+		{"missing field", "<0;12M", KeyNone, 0, 0},
+		{"non-numeric field", "<0;x;34M", KeyNone, 0, 0},
+		{"zero column", "<0;0;34M", KeyNone, 0, 0},
+		{"wrong final byte", "<0;12;34R", KeyNone, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decodeSequence([]rune(tt.seq))
+			if got.Key != tt.want || got.Col != tt.col || got.Row != tt.row {
+				t.Errorf("decodeSequence(%q) = %+v, want key %v at %d,%d",
+					tt.seq, got, tt.want, tt.col, tt.row)
+			}
+		})
+	}
+}
+
+// A mouse report is longer than any other sequence, so the reader must collect
+// it whole rather than abandoning it at the old five-rune cap.
+func TestReadEventMouseReport(t *testing.T) {
+	got := readEvents(t, "\x1b[<0;1920;1080M", 1)
+	if got[0].Key != KeyMouse || got[0].Col != 1920 || got[0].Row != 1080 {
+		t.Errorf("event = %+v, want KeyMouse at 1920,1080", got[0])
 	}
 }
 

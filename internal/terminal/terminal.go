@@ -20,12 +20,26 @@ const (
 	KeyPageDown
 	KeyHome
 	KeyEnd
+	KeyTab
+	KeyShiftTab
+	// KeyMouse is a press of the primary mouse button. Releases, the other
+	// buttons and drags are discarded by the decoder, so a KeyMouse event
+	// always means "the reader clicked here".
+	KeyMouse
+	// KeyWheelUp and KeyWheelDown are wheel notches. Tracking takes the wheel
+	// away from the terminal, which would otherwise scroll the alternate
+	// screen itself, so the application has to move the viewport for it.
+	KeyWheelUp
+	KeyWheelDown
 )
 
-// Event is one input event.
+// Event is one input event. Col and Row are the 1-based cell the pointer was
+// over and are meaningful only for KeyMouse; every other key leaves them zero.
 type Event struct {
 	Key  Key
 	Rune rune
+	Col  int
+	Row  int
 }
 
 // Size is a terminal's dimensions in character cells.
@@ -70,6 +84,15 @@ const (
 	ClearScreen    = "\x1b[2J"
 	ClearToEOL     = "\x1b[K"
 	ResetSGR       = "\x1b[0m"
+
+	// Mouse tracking. Mode 1000 reports button presses and releases only —
+	// not motion, which would flood the input pump with events the viewer has
+	// no use for. Mode 1006 asks for SGR-encoded reports, whose coordinates
+	// are decimal and so are not capped at column 223 the way the original
+	// encoding is. Turning tracking on costs the terminal's own drag-select,
+	// which is why Leave must always turn it back off.
+	EnableMouse  = "\x1b[?1000h\x1b[?1006h"
+	DisableMouse = "\x1b[?1006l\x1b[?1000l"
 )
 
 // Fallback dimensions, used when the terminal reports something unusable.
