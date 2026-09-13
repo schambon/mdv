@@ -349,8 +349,8 @@ func decodeSequence(seq []rune) Event {
 // decodeMouse reads an SGR mouse report, "<button;col;row" followed by M for a
 // press or m for a release.
 //
-// Only a press of the primary button becomes an event. Releases, the other
-// buttons, drags and the wheel all resolve to KeyNone, which the viewer
+// Only a press of the primary button and the wheel notches become events.
+// Releases, the other buttons and drags all resolve to KeyNone, which the viewer
 // ignores: reporting them would make every click arrive twice and leave the
 // application filtering input it never asked for. An unparseable report is
 // KeyNone as well rather than KeyEscape — it was plainly a mouse report, and
@@ -383,17 +383,22 @@ func decodeMouse(seq []rune) Event {
 	// The modifier bits — shift (4), meta (8) and control (16) — say nothing
 	// about which event this is, so they are masked off before the rest is
 	// read. Of what remains, 0x40 marks the wheel, whose low bits then give
-	// the direction, and 0 is the primary button.
+	// the direction — 0 and 1 vertical, 2 and 3 horizontal — and 0 is the
+	// primary button.
 	switch button := n[0] &^ 0x1C; {
 	case button == 0x40:
 		return Event{Key: KeyWheelUp}
 	case button == 0x41:
 		return Event{Key: KeyWheelDown}
+	case button == 0x42:
+		return Event{Key: KeyWheelLeft}
+	case button == 0x43:
+		return Event{Key: KeyWheelRight}
 	case button != 0:
-		// Every other button, a drag (0x20), horizontal wheel notches and the
-		// extra buttons (0x80). Testing for what is allowed rather than
-		// against a list of rejects means a report this decoder has never
-		// seen is dropped, not mistaken for a click.
+		// Every other button, a drag (0x20) and the extra buttons (0x80).
+		// Testing for what is allowed rather than against a list of rejects
+		// means a report this decoder has never seen is dropped, not mistaken
+		// for a click.
 		return Event{Key: KeyNone}
 	}
 	if n[1] < 1 || n[2] < 1 {

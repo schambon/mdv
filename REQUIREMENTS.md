@@ -59,6 +59,7 @@ Implemented keys:
 | `<`, `>` | Go back to the previous file, or forward again |
 | Mouse click | Open the link under the pointer |
 | Mouse wheel | Move the viewport three rendered rows per notch |
+| Sideways swipe | Go back or forward, one file per gesture |
 | `k`, Up | Move up one rendered row |
 | Space, PageDown, `Ctrl-F` | Move down one page |
 | `b`, PageUp, `Ctrl-B` | Move up one page |
@@ -272,7 +273,7 @@ When git mode finds more than one changed file, a list of them is drawn down the
 
 Each entry shows a selection marker, git's status letter, the path, and git's `+N -M` line counts. The marker, not the highlight, is what makes the selection visible without colour. A path too long for the list keeps its tail, with the cut marked by an ellipsis, since the tail is what names the file. The counts come from a single `git diff --numstat` over the whole list, so labelling the list does not require diffing every file in it; they are git's line counts, and in Markdown mode they will not agree with the status line's `+N -M blocks`, which describes the file actually on screen.
 
-The list has exactly one interaction: pick a file. `>` and `<`, or the right and left arrows, move the selection and rebuild the diff beside it. There is no focus model and nothing else is focusable — `j`, `k`, search and every other key always act on the diff. Moving off either end of the list says so rather than wrapping.
+The list has exactly one interaction: pick a file. `>` and `<`, the right and left arrows, or a sideways swipe move the selection and rebuild the diff beside it. There is no focus model and nothing else is focusable — `j`, `k`, search and every other key always act on the diff. Moving off either end of the list says so rather than wrapping.
 
 Switching files resets the viewport to the top and clears the active search match, since row indices mean nothing in a document they were not measured against. Folds expanded in a file are kept, so returning to it finds it as it was left. `r` re-asks git; the file on screen is followed by name, and falls back to the first of what still differs when it is no longer in the list.
 
@@ -282,8 +283,10 @@ The list is sized to its longest entry, between 18 and 32 columns. It is dropped
 
 The Darwin backend saves and restores termios, disables echo, canonical mode, signals, extended processing, CR translation, software flow control, and output post-processing, and makes enter/leave idempotent. Escape-sequence decoding supports arrows, Page Up/Down, Home, End, and Shift-Tab. A 35 ms readiness check distinguishes a bare Escape key.
 
-Entering also turns on mouse tracking (modes 1000 and 1006: button presses and releases, SGR-encoded, no motion reporting), and leaving turns it off again — including around a suspended editor, which goes through the same leave and re-enter. A press of the primary button and a vertical wheel notch become events; releases, the other buttons, drags, horizontal notches and the extra buttons are discarded by the decoder. Modifier bits do not change what an event is, so a shift-click is still a click.
+Entering also turns on mouse tracking (modes 1000 and 1006: button presses and releases, SGR-encoded, no motion reporting), and leaving turns it off again — including around a suspended editor, which goes through the same leave and re-enter. A press of the primary button and a wheel notch, vertical or horizontal, become events; releases, the other buttons, drags and the extra buttons are discarded by the decoder. Modifier bits do not change what an event is, so a shift-click is still a click.
 
 Because tracking stops the terminal from scrolling the alternate screen itself, the viewer moves the viewport for the wheel — three rendered rows per notch, clamped like any other movement and working in every mode, including with a search prompt open. While mdv runs, the terminal's own drag-to-select needs the modifier key that terminal uses to bypass tracking.
+
+Horizontal notches — a two-finger sideways swipe on a trackpad — are navigation rather than movement, and do what `<` and `>` do: go back and forward through the visited files in the viewer, move through the changed-file list in git mode. Nothing scrolls horizontally, so there is no other meaning to give them. A trackpad reports one flick as a burst of notches, so notches in the same direction less than 400 ms apart are treated as one gesture and move one step; a swipe the other way always starts a new one. Unlike the vertical wheel, a swipe is a normal-mode binding: it is ignored while a search prompt is open, so a stray gesture cannot take the file away from a half-typed query.
 
 `SIGWINCH` updates the stored size, reflows the document, and redraws. `SIGINT`, `SIGTERM`, and `SIGHUP` exit cleanly through deferred terminal restoration. A recovered application panic restores the terminal and is rethrown as `mdv: internal panic`.

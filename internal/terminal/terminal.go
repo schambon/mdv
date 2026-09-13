@@ -31,6 +31,12 @@ const (
 	// screen itself, so the application has to move the viewport for it.
 	KeyWheelUp
 	KeyWheelDown
+	// KeyWheelLeft and KeyWheelRight are horizontal wheel notches, which is
+	// what a trackpad reports for a two-finger sideways swipe. Nothing
+	// scrolls horizontally, so the viewer reads them as the gesture they are
+	// rather than as movement.
+	KeyWheelLeft
+	KeyWheelRight
 )
 
 // Event is one input event. Col and Row are the 1-based cell the pointer was

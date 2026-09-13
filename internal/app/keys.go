@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/schambon/mdv/internal/search"
 	"github.com/schambon/mdv/internal/terminal"
@@ -18,6 +19,13 @@ const (
 // takes the wheel away from the terminal, so mdv has to scroll for it; three
 // rows is what terminals themselves send.
 const wheelRows = 3
+
+// swipeGap is how quiet a horizontal gesture must go before the next notch
+// counts as a new swipe. A trackpad reports one flick as a burst of notches —
+// often dozens — so acting on every one would run the whole changed-file list
+// past in a single gesture. A tilt wheel, which sends one notch at a time with
+// human pauses between them, is unaffected.
+const swipeGap = 400 * time.Millisecond
 
 const keyHelp = "j/k move  space/b page  g/G ends  tab link  enter open  < > back/fwd  / ? search  n/N next  l numbers  t theme  v edit  r reload  q quit"
 
@@ -84,6 +92,10 @@ func (a *App) handleNormalKey(ev terminal.Event) (bool, error) {
 		a.cycleLink(-1)
 	case terminal.KeyMouse:
 		a.clickLink(ev)
+	case terminal.KeyWheelLeft:
+		a.swipe(-1)
+	case terminal.KeyWheelRight:
+		a.swipe(1)
 	case terminal.KeyUp:
 		a.scroll(-1)
 	case terminal.KeyPageDown:
@@ -153,6 +165,38 @@ func (a *App) handleRune(r rune) (bool, error) {
 		a.repeatSearch(opposite(a.direction))
 	}
 	return false, nil
+}
+
+// swipe moves one step through whatever `<` and `>` move through: the changed
+// file list in diff mode, the visited-file history in the viewer. Unlike the
+// vertical wheel it is dispatched with the other normal-mode keys rather than
+// ahead of them, because a stray gesture should not be able to leave the file
+// out from under a half-typed search query.
+func (a *App) swipe(delta int) {
+	now := a.clock()
+	fresh := delta != a.swipeDir || now.Sub(a.lastSwipe) > swipeGap
+	a.lastSwipe, a.swipeDir = now, delta
+	if !fresh {
+		return
+	}
+
+	switch {
+	case a.cfg.diffMode():
+		a.selectRelative(delta)
+	case delta < 0:
+		a.goBack()
+	default:
+		a.goForward()
+	}
+}
+
+// clock reads the swipe debounce's time source. An App built without one — as
+// every test that does not play a gesture is — uses the real clock.
+func (a *App) clock() time.Time {
+	if a.now == nil {
+		return time.Now()
+	}
+	return a.now()
 }
 
 func (a *App) scroll(delta int) {

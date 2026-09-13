@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/schambon/mdv/internal/diffdoc"
 	"github.com/schambon/mdv/internal/editor"
@@ -83,6 +84,9 @@ type App struct {
 	runEdit func(argv []string) error
 	runOpen func(target string) error
 	runGit  git.Runner
+	// now is the swipe debounce's clock, injectable so a test can play a
+	// gesture out without sleeping.
+	now func() time.Time
 
 	src         source.Source
 	rendered    layout.Document
@@ -118,6 +122,12 @@ type App struct {
 	activeLink int
 	back       []visit
 	forward    []visit
+
+	// Horizontal swipe. lastSwipe is when the last notch of the current
+	// gesture arrived and swipeDir which way it went; together they let one
+	// flick of a trackpad count as one navigation. See swipe.
+	lastSwipe time.Time
+	swipeDir  int
 
 	query     string
 	lastQuery string
