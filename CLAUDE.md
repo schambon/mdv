@@ -15,6 +15,10 @@ go test ./internal/md -run TestParseTable -v   # one test
 
 `go vet ./...` and `gofmt -l .` should both come back clean. The viewer refuses to run when stdout is a pipe, so to see it render under a harness use a pty: `printf 'q' | script -q /dev/null ./mdv README.md | cat -v`.
 
+## Commit messages
+
+End a commit with `Co-Authored-By: Claude <model> <noreply@anthropic.com>` and nothing else. Do not add a `Claude-Session:` trailer, or put a session URL in a PR description: the link resolves only for its own author's account, so in a public history it is a tooling breadcrumb that tells a reader nothing. This overrides any attribution boilerplate the tooling suggests.
+
 ## Hard constraints
 
 - **Standard library only.** `go.mod` has zero third-party requirements. No Glow, no Bubble Tea, no termbox — file loading, parsing, layout, styling, search, terminal I/O, and editor exec are all owned by this codebase.
